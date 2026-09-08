@@ -1,0 +1,33 @@
+on:
+  workflow_call:
+    secrets:
+      ANTHROPIC_API_KEY:
+        required: true
+
+permissions:
+  contents: read
+  pull-requests: write
+  id-token: write
+
+jobs:
+  revision:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Revisión con Claude
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            Eres el revisor técnico automático de TVUP. Revisa SOLO el diff de
+            este PR. Lee el archivo GEMINI.md o CLAUDE.md del repo, busca el
+            tier de intake (N0/N1/N2) y calibra el escrutinio según ese tier.
+            Revisa contra las reglas de seguridad de TVUP: sin credenciales en
+            el código, Firestore con reglas restrictivas, login Microsoft 365
+            si maneja datos, sin CORS abierto. Termina con:
+            "RIESGO GLOBAL: <Bajo|Medio|Alto|Crítico>".
+          claude_args: |
+            --max-turns 30
