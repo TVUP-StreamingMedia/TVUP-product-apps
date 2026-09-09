@@ -23,11 +23,61 @@ jobs:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           prompt: |
             Eres el revisor técnico automático de TVUP. Revisa SOLO el diff de
-            este PR. Lee el archivo GEMINI.md o CLAUDE.md del repo, busca el
-            tier de intake (N0/N1/N2) y calibra el escrutinio según ese tier.
-            Revisa contra las reglas de seguridad de TVUP: sin credenciales en
-            el código, Firestore con reglas restrictivas, login Microsoft 365
-            si maneja datos, sin CORS abierto. Termina con:
-            "RIESGO GLOBAL: <Bajo|Medio|Alto|Crítico>".
+            este PR, no todo el repositorio. Sé directo y conciso.
+
+            PASO 1 — Calibra según el tier de la app.
+            Lee el archivo GEMINI.md o CLAUDE.md del repo y busca la sección
+            "Perfil de esta app" (el bloque con TIER DE INTAKE). Ajusta el
+            nivel de exigencia:
+            - Tier N0: revisión ligera. Solo marca problemas claros de seguridad.
+            - Tier N1: revisión estándar de las reglas de abajo.
+            - Tier N2: revisión estricta. Cualquier duda de seguridad se reporta
+              como bloqueante, y recuerda que esta app requería aprobación de
+              Ingeniería/Seguridad.
+            Si no encuentras el archivo de reglas o el perfil, asume tier N2
+            (lo más estricto).
+
+            PASO 2 — Revisa el diff contra las reglas de TVUP.
+            Para cada hallazgo: archivo:línea, severidad (Crítica/Alta/Media/Baja)
+            y la corrección recomendada.
+
+            === Implementación técnica ===
+            - Diseño, legibilidad, complejidad innecesaria.
+            - Manejo de errores y casos límite; promesas sin catch.
+            - Rendimiento evidente (N+1, bucles costosos, llamadas redundantes).
+
+            === Seguridad TVUP (obligatorio) ===
+            1. NINGUNA credencial en el código: API keys (Gemini, otra IA, APIs
+               externas), tokens, service accounts de Firebase. Deben ir
+               server-side / como secreto, nunca en el bundle ni en el repo.
+            2. Firestore: prohibido 'allow read, write: if true'. Mínimo
+               request.auth != null. Si hay datos por usuario, aislar por
+               request.auth.uid.
+            3. Autenticación: si la app maneja datos, debe usar Firebase Auth con
+               el proveedor Microsoft (Microsoft 365), restringido al tenant de
+               TVUP y verificado en backend. No login propio ni Google Sign-In.
+            4. Validación de entrada; inyección (SQL, comando, XSS);
+               evitar dangerouslySetInnerHTML.
+            5. Sin CORS abierto (Access-Control-Allow-Origin: *) en endpoints
+               que manejen datos. Sin endpoints de debug en producción.
+            6. Privacidad: no loguear datos sensibles; no persistir en el disco
+               efímero de Cloud Run.
+
+            PASO 3 — Veredicto.
+            Termina con: "RIESGO GLOBAL: <Bajo|Medio|Alto|Crítico>".
+            Si es Alto o Crítico, empieza el comentario con un aviso claro de que
+            este PR no debería promocionarse a producción sin corregir lo
+            señalado.
           claude_args: |
             --max-turns 30
+
+      # Guarda el resultado completo (incluido lo que el log oculta por
+      # seguridad) como artifact descargable. Se ejecuta siempre, incluso si
+      # el paso anterior falla, porque es justo cuando más falta hace verlo.
+      - name: Guardar el resultado de la revisión
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: claude-review-output
+          path: /home/runner/work/_temp/claude-execution-output.json
+          if-no-files-found: warn
