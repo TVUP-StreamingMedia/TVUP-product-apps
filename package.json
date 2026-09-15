@@ -1,0 +1,37 @@
+{
+  "name": "seed---idea-management-portal",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx server.ts",
+    "start": "tsx server.ts",
+    "build": "vite build",
+    "lint": "tsc --noEmit",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@google/genai": "^1.41.0",
+    "@tailwindcss/typography": "^0.5.19",
+    "express": "^5.2.1",
+    "firebase": "^12.9.0",
+    "lucide-react": "^1.7.0",
+    "nodemailer": "^8.0.2",
+    "pptxgenjs": "^3.12.0",
+    "react": "^19.2.4",
+    "react-beautiful-dnd": "^13.1.1",
+    "react-dom": "^19.2.4",
+    "react-easy-crop": "^5.5.6",
+    "react-markdown": "^10.1.0",
+    "recharts": "^3.7.0",
+    "tsx": "^4.21.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.14.0",
+    "@types/nodemailer": "^7.0.11",
+    "@types/react-beautiful-dnd": "^13.1.8",
+    "@vitejs/plugin-react": "^5.0.0",
+    "typescript": "~5.8.2",
+    "vite": "^6.2.0"
+  }
+}
