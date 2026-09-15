@@ -1,0 +1,52 @@
+substitutions:
+  _SERVICE: "gestion-suscripciones"
+  _REGION: "europe-west1"
+
+steps:
+  # 1. Defensa en profundidad: bloquea el despliegue si hay una credencial
+  #    evidente en el código.
+  - name: 'gcr.io/cloud-builders/git'
+    id: 'check-secrets'
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        set -e
+        if grep -rEqI 'AIza[0-9A-Za-z_-]{35}|BEGIN [A-Z ]*PRIVATE KEY|"type": "service_account"' \
+             --include='*.js' --include='*.ts' --include='*.jsx' \
+             --include='*.json' --include='*.env' . ; then
+          echo "Posible credencial en el codigo. Despliegue detenido."
+          exit 1
+        fi
+        echo "Sin credenciales evidentes en el codigo."
+
+  # 2. Desplegar a Cloud Run.
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    id: 'deploy-prod'
+    entrypoint: 'gcloud'
+    args:
+      - 'run'
+      - 'deploy'
+      - '${_SERVICE}'
+      - '--source=.'
+      - '--region=${_REGION}'
+      - '--allow-unauthenticated'
+
+  # 3. Asegurar el acceso público de forma explícita.
+  #    El --allow-unauthenticated del paso anterior falla silenciosamente en
+  #    algunos proyectos, así que se aplica aquí de nuevo para que no dependa
+  #    de ejecutarlo a mano después de cada despliegue.
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    id: 'allow-public'
+    entrypoint: 'gcloud'
+    args:
+      - 'run'
+      - 'services'
+      - 'add-iam-policy-binding'
+      - '${_SERVICE}'
+      - '--region=${_REGION}'
+      - '--member=allUsers'
+      - '--role=roles/run.invoker'
+
+options:
+  logging: CLOUD_LOGGING_ONLY
