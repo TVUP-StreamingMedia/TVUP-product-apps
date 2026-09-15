@@ -69,7 +69,7 @@ jobs:
             este PR no debería promocionarse a producción sin corregir lo
             señalado.
           claude_args: |
-            --max-turns 30
+            --max-turns 50
 
       # Guarda el resultado completo (incluido lo que el log oculta por
       # seguridad) como artifact descargable. Se ejecuta siempre, incluso si
