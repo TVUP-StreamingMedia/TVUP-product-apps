@@ -66,6 +66,9 @@ jobs:
         uses: anthropics/claude-code-action@v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_args: |
+            --max-turns 40
+            --allowedTools "Read,Grep,Glob,Bash,Write"
           prompt: |
             Eres el revisor técnico automático de TVUP. No hay Pull Request:
             revisa el ESTADO COMPLETO del código del repositorio.
@@ -109,8 +112,6 @@ jobs:
             - Al final, una sola línea: "RIESGO GLOBAL: <Bajo|Medio|Alto|Crítico>".
             Usa la herramienta de escritura de archivos para crear el archivo
             de verdad; no te limites a describirlo en tu respuesta.
-          claude_args: |
-            --max-turns 40
 
       - name: Diagnóstico — localizar el informe
         if: always()
