@@ -112,10 +112,23 @@ jobs:
           claude_args: |
             --max-turns 40
 
+      - name: Diagnóstico — localizar el informe
+        if: always()
+        run: |
+          echo "Workspace: $GITHUB_WORKSPACE"
+          echo "--- Archivos .md en todo el workspace ---"
+          find "$GITHUB_WORKSPACE" -iname "*.md" -newer /tmp 2>/dev/null || true
+          echo "--- Por si acaso, búsqueda global en /home/runner ---"
+          find /home/runner -iname "INFORME-REVISION.md" 2>/dev/null || true
+          echo "--- Contenido de la raíz del repo ---"
+          ls -la "$GITHUB_WORKSPACE"
+
       - name: Guardar el informe como artifact (si existe)
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: informe-revision
-          path: INFORME-REVISION.md
+          path: |
+            ${{ github.workspace }}/INFORME-REVISION.md
+            INFORME-REVISION.md
           if-no-files-found: ignore
