@@ -17,67 +17,105 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Revisión con Claude
+      # ── Caso A: evento de Pull Request → comentarios en línea sobre el diff ──
+      - name: Revisión del PR (comentarios en línea)
+        if: github.event_name == 'pull_request'
         uses: anthropics/claude-code-action@v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           prompt: |
             Eres el revisor técnico automático de TVUP. Revisa SOLO el diff de
-            este PR, no todo el repositorio. Sé directo y conciso.
+            este PR, no todo el repositorio. Publica tus hallazgos como
+            comentarios en línea sobre las líneas concretas del código.
 
             PASO 1 — Calibra según el tier de la app.
-            Lee el archivo GEMINI.md o CLAUDE.md del repo y busca la sección
-            "Perfil de esta app" (el bloque con TIER DE INTAKE). Ajusta el
-            nivel de exigencia:
-            - Tier N0: revisión ligera. Solo marca problemas claros de seguridad.
-            - Tier N1: revisión estándar de las reglas de abajo.
-            - Tier N2: revisión estricta. Cualquier duda de seguridad se reporta
-              como bloqueante, y recuerda que esta app requería aprobación de
-              Ingeniería/Seguridad.
-            Si no encuentras el archivo de reglas o el perfil, asume tier N2
-            (lo más estricto).
+            Lee GEMINI.md o CLAUDE.md, busca "Perfil de esta app" (TIER DE
+            INTAKE). N0: revisión ligera. N1: estándar. N2: estricta, cualquier
+            duda es bloqueante. Sin archivo de reglas ni perfil: asume N2.
 
-            PASO 2 — Revisa el diff contra las reglas de TVUP.
-            Para cada hallazgo: archivo:línea, severidad (Crítica/Alta/Media/Baja)
-            y la corrección recomendada.
+            PASO 2 — Revisa contra las reglas de TVUP.
+            Para cada hallazgo: severidad (Crítica/Alta/Media/Baja) y la
+            corrección recomendada.
 
             === Implementación técnica ===
-            - Diseño, legibilidad, complejidad innecesaria.
-            - Manejo de errores y casos límite; promesas sin catch.
-            - Rendimiento evidente (N+1, bucles costosos, llamadas redundantes).
+            Diseño, legibilidad, manejo de errores, rendimiento evidente,
+            bugs de lógica (especialmente en cálculos con dinero o datos reales).
 
             === Seguridad TVUP (obligatorio) ===
-            1. NINGUNA credencial en el código: API keys (Gemini, otra IA, APIs
-               externas), tokens, service accounts de Firebase. Deben ir
-               server-side / como secreto, nunca en el bundle ni en el repo.
+            1. Ninguna credencial en el código (API keys, tokens, service
+               accounts). Server-side o como secreto, nunca en el repo.
             2. Firestore: prohibido 'allow read, write: if true'. Mínimo
-               request.auth != null. Si hay datos por usuario, aislar por
-               request.auth.uid.
-            3. Autenticación: si la app maneja datos, debe usar Firebase Auth con
-               el proveedor Microsoft (Microsoft 365), restringido al tenant de
-               TVUP y verificado en backend. No login propio ni Google Sign-In.
-            4. Validación de entrada; inyección (SQL, comando, XSS);
-               evitar dangerouslySetInnerHTML.
-            5. Sin CORS abierto (Access-Control-Allow-Origin: *) en endpoints
-               que manejen datos. Sin endpoints de debug en producción.
-            6. Privacidad: no loguear datos sensibles; no persistir en el disco
-               efímero de Cloud Run.
+               request.auth != null; datos por usuario aislados por uid.
+            3. Si maneja datos: Firebase Auth con proveedor Microsoft (M365),
+               restringido al tenant y verificado en backend.
+            4. Validación de entrada; inyección; sin dangerouslySetInnerHTML.
+            5. Sin CORS abierto en endpoints con datos; sin endpoints de debug.
+            6. Sin datos sensibles en logs; sin persistir en disco efímero.
+            7. .gitignore presente con .env*.
+            8. pnpm como gestor de paquetes (pnpm-lock.yaml).
 
             PASO 3 — Veredicto.
-            Termina con: "RIESGO GLOBAL: <Bajo|Medio|Alto|Crítico>".
-            Si es Alto o Crítico, empieza el comentario con un aviso claro de que
-            este PR no debería promocionarse a producción sin corregir lo
-            señalado.
+            Termina el resumen del PR con: "RIESGO GLOBAL: <Bajo|Medio|Alto|Crítico>".
+            Si es Alto o Crítico, indica que no debe fusionarse sin corregir.
           claude_args: |
-            --max-turns 50
+            --max-turns 30
 
-      # Guarda el resultado completo (incluido lo que el log oculta por
-      # seguridad) como artifact descargable. Se ejecuta siempre, incluso si
-      # el paso anterior falla, porque es justo cuando más falta hace verlo.
-      - name: Guardar el resultado de la revisión
+      # ── Caso B: disparo manual (sin PR) → informe completo en archivo ──
+      - name: Revisión manual (informe completo)
+        if: github.event_name == 'workflow_dispatch'
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            Eres el revisor técnico automático de TVUP. No hay Pull Request:
+            revisa el ESTADO COMPLETO del código del repositorio.
+
+            PASO 1 — Calibra según el tier de la app.
+            Lee GEMINI.md o CLAUDE.md, busca "Perfil de esta app" (TIER DE
+            INTAKE). N0: revisión ligera. N1: estándar. N2: estricta, cualquier
+            duda es bloqueante y recuerda que esta app requería aprobación de
+            Ingeniería/Seguridad. Sin archivo de reglas ni perfil: asume N2.
+
+            PASO 2 — Revisa contra las reglas de TVUP.
+            Para cada hallazgo: archivo:línea, severidad (Crítica/Alta/Media/Baja)
+            y la corrección recomendada, con el fragmento de código a cambiar
+            si aporta claridad.
+
+            === Implementación técnica ===
+            Diseño, legibilidad, manejo de errores, rendimiento evidente,
+            bugs de lógica (especialmente en cálculos con dinero o datos reales).
+
+            === Seguridad TVUP (obligatorio) ===
+            1. Ninguna credencial en el código (API keys, tokens, service
+               accounts). Server-side o como secreto, nunca en el repo.
+            2. Firestore: prohibido 'allow read, write: if true'. Mínimo
+               request.auth != null; datos por usuario aislados por uid.
+            3. Si maneja datos: Firebase Auth con proveedor Microsoft (M365),
+               restringido al tenant y verificado en backend.
+            4. Validación de entrada; inyección; sin dangerouslySetInnerHTML.
+            5. Sin CORS abierto en endpoints con datos; sin endpoints de debug.
+            6. Sin datos sensibles en logs; sin persistir en disco efímero.
+            7. .gitignore presente con .env*.
+            8. pnpm como gestor de paquetes (pnpm-lock.yaml).
+
+            PASO 3 — Escribe el informe en un archivo.
+            Vuelca TODO el análisis (no un resumen) en un archivo Markdown en
+            la raíz del repositorio llamado INFORME-REVISION.md, con:
+            - Encabezado con la fecha y el tier aplicado.
+            - Una sección por hallazgo, con severidad, ubicación, descripción
+              y corrección propuesta.
+            - Una sección final "Instrucciones para corregir" redactada como
+              un prompt listo para pegar en Claude Code o Google AI Studio.
+            - Al final, una sola línea: "RIESGO GLOBAL: <Bajo|Medio|Alto|Crítico>".
+            Usa la herramienta de escritura de archivos para crear el archivo
+            de verdad; no te limites a describirlo en tu respuesta.
+          claude_args: |
+            --max-turns 40
+
+      - name: Guardar el informe como artifact (si existe)
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: claude-review-output
-          path: /home/runner/work/_temp/claude-execution-output.json
-          if-no-files-found: warn
+          name: informe-revision
+          path: INFORME-REVISION.md
+          if-no-files-found: ignore
