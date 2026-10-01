@@ -17,119 +17,94 @@ jobs:
         with:
           fetch-depth: 0
 
-      # ── Caso A: evento de Pull Request → comentarios en línea sobre el diff ──
+      # ── Caso A: Pull Request → comentarios en línea sobre el diff ──
       - name: Revisión del PR (comentarios en línea)
         if: github.event_name == 'pull_request'
         uses: anthropics/claude-code-action@v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          prompt: |
-            Eres el revisor técnico automático de TVUP. Revisa SOLO el diff de
-            este PR, no todo el repositorio. Publica tus hallazgos como
-            comentarios en línea sobre las líneas concretas del código.
-
-            PASO 1 — Calibra según el tier de la app.
-            Lee GEMINI.md o CLAUDE.md, busca "Perfil de esta app" (TIER DE
-            INTAKE). N0: revisión ligera. N1: estándar. N2: estricta, cualquier
-            duda es bloqueante. Sin archivo de reglas ni perfil: asume N2.
-
-            PASO 2 — Revisa contra las reglas de TVUP.
-            Para cada hallazgo: severidad (Crítica/Alta/Media/Baja) y la
-            corrección recomendada.
-
-            === Implementación técnica ===
-            Diseño, legibilidad, manejo de errores, rendimiento evidente,
-            bugs de lógica (especialmente en cálculos con dinero o datos reales).
-
-            === Seguridad TVUP (obligatorio) ===
-            1. Ninguna credencial en el código (API keys, tokens, service
-               accounts). Server-side o como secreto, nunca en el repo.
-            2. Firestore: prohibido 'allow read, write: if true'. Mínimo
-               request.auth != null; datos por usuario aislados por uid.
-            3. Si maneja datos: Firebase Auth con proveedor Microsoft (M365),
-               restringido al tenant y verificado en backend.
-            4. Validación de entrada; inyección; sin dangerouslySetInnerHTML.
-            5. Sin CORS abierto en endpoints con datos; sin endpoints de debug.
-            6. Sin datos sensibles en logs; sin persistir en disco efímero.
-            7. .gitignore presente con .env*.
-            8. pnpm como gestor de paquetes (pnpm-lock.yaml).
-
-            PASO 3 — Veredicto.
-            Termina el resumen del PR con: "RIESGO GLOBAL: <Bajo|Medio|Alto|Crítico>".
-            Si es Alto o Crítico, indica que no debe fusionarse sin corregir.
           claude_args: |
             --max-turns 30
+          prompt: |
+            Eres el revisor técnico automático de TVUP. Revisa SOLO el diff de
+            este PR. Publica tus hallazgos como comentarios en línea sobre las
+            líneas concretas del código.
 
-      # ── Caso B: disparo manual (sin PR) → informe completo en archivo ──
+            PASO 1 — Calibra según el tier. Lee GEMINI.md o CLAUDE.md, sección
+            "Perfil de esta app" (TIER DE INTAKE). N0: ligera. N1: estándar.
+            N2: estricta, cualquier duda es bloqueante. Sin perfil: asume N2.
+
+            PASO 2 — Revisa contra las reglas de TVUP. Para cada hallazgo:
+            severidad (Crítica/Alta/Media/Baja) y corrección recomendada.
+            - Implementación: diseño, manejo de errores, rendimiento, bugs de
+              lógica (sobre todo en cálculos con dinero o datos reales).
+            - Seguridad: sin credenciales en el código; Firestore nunca
+              'if true' y mínimo request.auth != null; login Microsoft 365
+              restringido al tenant si maneja datos; validación de entrada y
+              sin dangerouslySetInnerHTML; sin CORS abierto ni endpoints de
+              debug; sin datos sensibles en logs; .gitignore con .env*; pnpm.
+
+            PASO 3 — Termina el resumen con "RIESGO GLOBAL: <Bajo|Medio|Alto|Crítico>".
+
+      # ── Caso B: disparo manual → informe completo ──
       - name: Revisión manual (informe completo)
+        id: manual
         if: github.event_name == 'workflow_dispatch'
         uses: anthropics/claude-code-action@v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           claude_args: |
             --max-turns 40
-            --allowedTools "Read,Grep,Glob,Bash,Write"
           prompt: |
             Eres el revisor técnico automático de TVUP. No hay Pull Request:
             revisa el ESTADO COMPLETO del código del repositorio.
 
-            PASO 1 — Calibra según el tier de la app.
-            Lee GEMINI.md o CLAUDE.md, busca "Perfil de esta app" (TIER DE
-            INTAKE). N0: revisión ligera. N1: estándar. N2: estricta, cualquier
-            duda es bloqueante y recuerda que esta app requería aprobación de
-            Ingeniería/Seguridad. Sin archivo de reglas ni perfil: asume N2.
+            PASO 1 — Calibra según el tier. Lee GEMINI.md o CLAUDE.md, sección
+            "Perfil de esta app" (TIER DE INTAKE). N0: ligera. N1: estándar.
+            N2: estricta, cualquier duda es bloqueante y la app requería
+            aprobación de Ingeniería/Seguridad. Sin perfil: asume N2.
 
-            PASO 2 — Revisa contra las reglas de TVUP.
-            Para cada hallazgo: archivo:línea, severidad (Crítica/Alta/Media/Baja)
-            y la corrección recomendada, con el fragmento de código a cambiar
-            si aporta claridad.
+            PASO 2 — Revisa contra las reglas de TVUP. Para cada hallazgo:
+            archivo:línea, severidad (Crítica/Alta/Media/Baja) y corrección
+            recomendada, con el fragmento de código si aporta claridad.
+            - Implementación: diseño, manejo de errores, rendimiento, bugs de
+              lógica (sobre todo en cálculos con dinero o datos reales).
+            - Seguridad: sin credenciales en el código; Firestore nunca
+              'if true' y mínimo request.auth != null; login Microsoft 365
+              restringido al tenant si maneja datos; validación de entrada y
+              sin dangerouslySetInnerHTML; sin CORS abierto ni endpoints de
+              debug; sin datos sensibles en logs; .gitignore con .env*; pnpm.
 
-            === Implementación técnica ===
-            Diseño, legibilidad, manejo de errores, rendimiento evidente,
-            bugs de lógica (especialmente en cálculos con dinero o datos reales).
-
-            === Seguridad TVUP (obligatorio) ===
-            1. Ninguna credencial en el código (API keys, tokens, service
-               accounts). Server-side o como secreto, nunca en el repo.
-            2. Firestore: prohibido 'allow read, write: if true'. Mínimo
-               request.auth != null; datos por usuario aislados por uid.
-            3. Si maneja datos: Firebase Auth con proveedor Microsoft (M365),
-               restringido al tenant y verificado en backend.
-            4. Validación de entrada; inyección; sin dangerouslySetInnerHTML.
-            5. Sin CORS abierto en endpoints con datos; sin endpoints de debug.
-            6. Sin datos sensibles en logs; sin persistir en disco efímero.
-            7. .gitignore presente con .env*.
-            8. pnpm como gestor de paquetes (pnpm-lock.yaml).
-
-            PASO 3 — Escribe el informe en un archivo.
-            Vuelca TODO el análisis (no un resumen) en un archivo Markdown en
-            la raíz del repositorio llamado INFORME-REVISION.md, con:
-            - Encabezado con la fecha y el tier aplicado.
-            - Una sección por hallazgo, con severidad, ubicación, descripción
+            PASO 3 — Entrega el informe COMPLETO como tu respuesta final, en
+            Markdown. NO escribas ningún archivo: tu respuesta final se
+            guardará automáticamente como informe. Estructura:
+            - Encabezado con el tier aplicado.
+            - Una sección por hallazgo: severidad, archivo:línea, descripción
               y corrección propuesta.
-            - Una sección final "Instrucciones para corregir" redactada como
-              un prompt listo para pegar en Claude Code o Google AI Studio.
-            - Al final, una sola línea: "RIESGO GLOBAL: <Bajo|Medio|Alto|Crítico>".
-            Usa la herramienta de escritura de archivos para crear el archivo
-            de verdad; no te limites a describirlo en tu respuesta.
+            - Sección final "Instrucciones para corregir", redactada como un
+              prompt listo para pegar en Claude Code o Google AI Studio.
+            - Última línea: "RIESGO GLOBAL: <Bajo|Medio|Alto|Crítico>".
 
-      - name: Diagnóstico — localizar el informe
-        if: always()
+      - name: Extraer el informe
+        if: always() && github.event_name == 'workflow_dispatch'
         run: |
-          echo "Workspace: $GITHUB_WORKSPACE"
-          echo "--- Archivos .md en todo el workspace ---"
-          find "$GITHUB_WORKSPACE" -iname "*.md" -newer /tmp 2>/dev/null || true
-          echo "--- Por si acaso, búsqueda global en /home/runner ---"
-          find /home/runner -iname "INFORME-REVISION.md" 2>/dev/null || true
-          echo "--- Contenido de la raíz del repo ---"
-          ls -la "$GITHUB_WORKSPACE"
+          FILE="${{ steps.manual.outputs.execution_file }}"
+          [ -f "$FILE" ] || FILE="$RUNNER_TEMP/claude-execution-output.json"
+          if [ ! -f "$FILE" ]; then
+            echo "No se encontró el resultado de la ejecución."
+            exit 0
+          fi
+          jq -r 'if type=="array"
+                 then (map(select(.type=="result")) | last | .result)
+                 else .result end' "$FILE" > INFORME-REVISION.md
+          echo "Informe generado ($(wc -l < INFORME-REVISION.md) líneas)"
+          # Resumen visible directamente en la página de la ejecución
+          cat INFORME-REVISION.md >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Guardar el informe como artifact (si existe)
-        if: always()
+      - name: Guardar el informe como artifact
+        if: always() && github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v4
         with:
           name: informe-revision
-          path: |
-            ${{ github.workspace }}/INFORME-REVISION.md
-            INFORME-REVISION.md
-          if-no-files-found: ignore
+          path: INFORME-REVISION.md
+          if-no-files-found: warn
