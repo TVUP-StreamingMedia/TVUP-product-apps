@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # release.sh — Despliegues recurrentes de apps ya promocionadas (TVUP)
 #
-#   estado    Qué está en producción y qué espera aprobación
-#   resumen   Qué cambia en el build pendiente: commits, PR, revisión, ficheros sensibles
-#   aprobar   Aprueba el build, despliega reglas de Firestore si cambiaron y verifica la URL
-#   rechazar  Rechaza el build pendiente
+#   status    Qué está en producción y qué espera aprobación
+#   summary   Qué cambia en el build pendiente: commits, PR, revisión, ficheros sensibles
+#   approve   Aprueba el build, despliega reglas de Firestore si cambiaron y verifica la URL
+#   reject    Rechaza el build pendiente
 #   rollback  Devuelve el tráfico a la revisión anterior
 #
 # Usa la misma configuración que promote-app.sh.
@@ -30,30 +30,32 @@ need() { command -v "$1" >/dev/null 2>&1 || die "Falta '$1'. $2"; }
 usage() {
   cat <<'EOF'
 Uso:
-  release.sh estado   --app <repo>
-  release.sh resumen  --app <repo> [--build <id>]
-  release.sh aprobar  --app <repo> --build <id> [--reglas]
-  release.sh rechazar --app <repo> --build <id>
+  release.sh status   --app <repo>
+  release.sh summary  --app <repo> [--build <id>]
+  release.sh approve  --app <repo> --build <id> [--rules]
+  release.sh reject   --app <repo> --build <id>
   release.sh rollback --app <repo> --yes
 
---reglas fuerza el despliegue de firestore.rules aunque no hayan cambiado.
-aprobar, rechazar y rollback cambian producción: decídelo antes de ejecutarlos.
+--rules fuerza el despliegue de firestore.rules aunque no hayan cambiado.
+approve, reject y rollback cambian producción: decídelo antes de ejecutarlos.
 EOF
 }
 
 CMD="${1:-}"; [[ $# -gt 0 ]] && shift
-APP=""; BUILD=""; REGLAS=0; YES=0
+APP=""; BUILD=""; RULES=0; YES=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --app)    APP="$2"; shift 2 ;;
     --build)  BUILD="$2"; shift 2 ;;
-    --reglas) REGLAS=1; shift ;;
+    --rules|--reglas) RULES=1; shift ;;
     --yes)    YES=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) die "Opción desconocida: $1" ;;
   esac
 done
-[[ "$CMD" =~ ^(estado|resumen|aprobar|rechazar|rollback)$ ]] || { usage; exit 1; }
+# Nombres antiguos en español, que se mantienen como alias.
+case "$CMD" in estado) CMD=status ;; resumen) CMD=summary ;; aprobar) CMD=approve ;; rechazar) CMD=reject ;; esac
+[[ "$CMD" =~ ^(status|summary|approve|reject|rollback)$ ]] || { usage; exit 1; }
 [[ -n "$APP" ]] || die "Falta --app"
 [[ -n "$CONFIG_FILE" && -f "$CONFIG_FILE" ]] || die "No encuentro promote-app.env (define PROMOTE_CONFIG)"
 # shellcheck source=/dev/null
@@ -93,8 +95,8 @@ public_url() {
   else gcloud run services describe "$SVC" --region="$REGION" "${G[@]}" --format='value(status.url)'; fi
 }
 
-# ---------------------------------------------------------------- estado
-cmd_estado() {
+# ---------------------------------------------------------------- status
+cmd_status() {
   local b ok_id pend
   b="$(builds_json)"
   step "Producción de $APP"
@@ -112,8 +114,8 @@ cmd_estado() {
   else jq -r '.[] | select(.status=="PENDING") | "  \(.id) · \(.createTime) · commit \(.substitutions.SHORT_SHA // "?")"' <<<"$b"; fi
 }
 
-# ---------------------------------------------------------------- resumen
-cmd_resumen() {
+# ---------------------------------------------------------------- summary
+cmd_summary() {
   local b head base cmp files prs
   b="$(builds_json)"
   if [[ -z "$BUILD" ]]; then
@@ -154,7 +156,7 @@ cmd_resumen() {
       grep -E "$GOVERNANCE_RE" <<<"$files" | sed 's/^/    /'
     else ok "Sin cambios en ficheros de gobierno"; fi
     if grep -qx 'firestore.rules' <<<"$files"; then
-      warn "Cambian las reglas de Firestore: 'aprobar' las desplegará también"
+      warn "Cambian las reglas de Firestore: 'approve' las desplegará también"
     fi
   fi
 
@@ -184,9 +186,9 @@ deploy_rules() {
   ok "Reglas de Firestore desplegadas"
 }
 
-# ---------------------------------------------------------------- aprobar
-cmd_aprobar() {
-  [[ -n "$BUILD" ]] || die "Falta --build (usa 'resumen' para verlo)"
+# ---------------------------------------------------------------- approve
+cmd_approve() {
+  [[ -n "$BUILD" ]] || die "Falta --build (usa 'summary' para verlo)"
   local b head base status url code changed=0
   b="$(builds_json)"
   [[ "$(jq -r --arg id "$BUILD" '.[]|select(.id==$id)|.status' <<<"$b")" == "PENDING" ]] \
@@ -199,7 +201,7 @@ cmd_aprobar() {
 
   step "Aprobando $BUILD"
   decide_build "$BUILD" APPROVED \
-    || die "No se pudo aprobar (¿falta el rol Cloud Build Approver?). Apruébalo en Cloud Build → History y vuelve a 'estado'"
+    || die "No se pudo aprobar (¿falta el rol Cloud Build Approver?). Apruébalo en Cloud Build → History y vuelve a 'status'"
   while :; do
     status="$(gcloud builds describe "$BUILD" --region="$CB_REGION" "${G[@]}" --format='value(status)')"
     case "$status" in
@@ -214,7 +216,7 @@ cmd_aprobar() {
   gcloud run services update-traffic "$SVC" --to-latest --region="$REGION" "${G[@]}" >/dev/null
   ok "Tráfico en la revisión nueva"
 
-  if [[ "$changed" == "1" || "$REGLAS" == "1" ]]; then step "Reglas de Firestore"; deploy_rules "$head"; fi
+  if [[ "$changed" == "1" || "$RULES" == "1" ]]; then step "Reglas de Firestore"; deploy_rules "$head"; fi
 
   step "Comprobación"
   url="$(public_url)"
@@ -223,8 +225,8 @@ cmd_aprobar() {
   else warn "$url responde $code. Si la app no funciona: release.sh rollback --app $APP --yes"; fi
 }
 
-# ---------------------------------------------------------------- rechazar
-cmd_rechazar() {
+# ---------------------------------------------------------------- reject
+cmd_reject() {
   [[ -n "$BUILD" ]] || die "Falta --build"
   decide_build "$BUILD" REJECTED \
     || die "No se pudo rechazar (¿falta el rol Cloud Build Approver?). Recházalo en Cloud Build → History"
@@ -244,10 +246,10 @@ cmd_rollback() {
   [[ "$YES" == "1" ]] || die "Añade --yes para confirmar la vuelta atrás"
   gcloud run services update-traffic "$SVC" --to-revisions="$prev=100" --region="$REGION" "${G[@]}" >/dev/null
   ok "Tráfico al 100 % en $prev"
-  warn "Las reglas de Firestore no se revierten solas. El siguiente 'aprobar' devuelve el tráfico a la última versión"
+  warn "Las reglas de Firestore no se revierten solas. El siguiente 'approve' devuelve el tráfico a la última versión"
 }
 
 case "$CMD" in
-  estado) cmd_estado ;; resumen) cmd_resumen ;; aprobar) cmd_aprobar ;;
-  rechazar) cmd_rechazar ;; rollback) cmd_rollback ;;
+  status) cmd_status ;; summary) cmd_summary ;; approve) cmd_approve ;;
+  reject) cmd_reject ;; rollback) cmd_rollback ;;
 esac
