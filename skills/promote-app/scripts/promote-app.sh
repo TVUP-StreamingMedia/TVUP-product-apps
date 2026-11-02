@@ -43,7 +43,7 @@ Opciones:
   --firebase            Añade los dominios a Authorized domains de Firebase (deploy)
   --firestore           Crea la base de datos de la app y despliega sus reglas (deploy)
   --approve             Aprueba el build sin preguntar (para uso desde Claude Code)
-  --login-ok            Confirma que la app N1/N2 tiene login Microsoft 365 (deploy)
+  --login-ok            Confirma que la app N1/N2 tiene implementado el login de su CLAUDE.md (deploy)
   --sin-dns             No crea el CNAME en Route 53; muestra el registro para crearlo a mano (deploy)
   --reuse-repo          Continúa aunque el repo ya exista                (promote)
   --dry-run             Muestra los comandos sin ejecutarlos
@@ -101,6 +101,19 @@ REPO_DIR="$WORK_DIR/$APP"
 REPORT_DIR="$WORK_DIR/informes/$APP"
 
 # Lee el tier del bloque de perfil. Si sigue el placeholder "[N0 | N1 | N2]", devuelve vacío.
+# Tipo de login del perfil del intake. Falla cerrado: cualquier valor que no sea «no requerido»
+# (o una línea ausente) cuenta como login obligatorio.
+login_from() {
+  local v
+  v="$(grep -E '^LOGIN CORPORATIVO:' "$1" | head -1 | sed -E 's/^LOGIN CORPORATIVO:[[:space:]]*//' || true)"
+  case "$v" in
+    "no requerido") echo ninguno ;;
+    *Microsoft*)    echo m365 ;;
+    *"por decidir"*) echo pendiente ;;
+    *)              echo otro ;;
+  esac
+}
+
 tier_from() {
   local line
   line="$(grep -E 'TIER DE INTAKE:' "$1" | head -1 || true)"
@@ -223,9 +236,14 @@ cmd_create() {
   if [[ -n "$perfil_svc" && "$perfil_svc" != "$SVC" ]]; then
     die "El intake dice SERVICIO '$perfil_svc' y el repo daría '$SVC'. Usa --app $perfil_svc o rehaz el intake con el nombre correcto"
   fi
-  grep -qE '^LOGIN CORPORATIVO:.*Microsoft' "$CLAUDE_MD" && login=1
+  local login_tipo; login_tipo="$(login_from "$CLAUDE_MD")"
+  [[ "$login_tipo" == "m365" ]] && login=1
   grep -qE '^PERSISTENCIA:.*base de datos' "$CLAUDE_MD" && db=1
-  ok "Perfil: tier $tier · login $([[ $login == 1 ]] && echo sí || echo no) · base de datos $([[ $db == 1 ]] && echo sí || echo no)"
+  ok "Perfil: tier $tier · login $login_tipo · base de datos $([[ $db == 1 ]] && echo sí || echo no)"
+  if [[ "$login_tipo" == "otro" || "$login_tipo" == "pendiente" ]]; then
+    warn "El perfil pide un login que no es Microsoft 365: create NO trae código de login para él."
+    warn "La app no se puede hacer pública hasta que Ingeniería implemente ese login (deploy no lo hará)."
+  fi
 
   preflight_github
   local ASSETS_DIR; ASSETS_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -497,12 +515,12 @@ cmd_deploy() {
   [[ "$verificado" == "1" ]] \
     || warn "Tu cuenta de gcloud no tiene verificado $FQDN ni un dominio padre en Search Console: el domain mapping fallará"
 
-  local tier_file tier
-  tier_file="$(mktemp)"
-  gh api -H "Accept: application/vnd.github.raw" "repos/$REPO/contents/CLAUDE.md" > "$tier_file" 2>/dev/null || true
-  tier="$(tier_from "$tier_file")"; rm -f "$tier_file"
+  local perfil_file tier login_tipo
+  perfil_file="$(mktemp)"
+  gh api -H "Accept: application/vnd.github.raw" "repos/$REPO/contents/CLAUDE.md" > "$perfil_file" 2>/dev/null || true
+  tier="$(tier_from "$perfil_file")"; login_tipo="$(login_from "$perfil_file")"; rm -f "$perfil_file"
   [[ -n "$tier" ]] || { warn "No se pudo leer el tier del CLAUDE.md; se trata como N2"; tier="N2"; }
-  ok "Tier $tier"
+  ok "Tier $tier · login $login_tipo"
 
   # Paso 18 — vincular repo a Cloud Build
   step "Paso 18 · Vincular el repo a Cloud Build"
@@ -591,7 +609,9 @@ cmd_deploy() {
 
   # Acceso público: solo N0 o con login confirmado. El binding persiste entre despliegues.
   step "Acceso público"
-  if [[ "$tier" == "N0" || "$LOGIN_OK" == "1" ]] || confirm "La app es $tier. ¿Tiene implementado el login de Microsoft 365?"; then
+  if [[ "$login_tipo" == "pendiente" ]]; then
+    warn "El login de la app está por decidir con Ingeniería: no se hace pública, ni con --login-ok."
+  elif [[ "$tier" == "N0" || "$LOGIN_OK" == "1" ]] || confirm "La app es $tier. ¿Tiene implementado el login que pide su CLAUDE.md ($login_tipo)?"; then
     gcloud run services add-iam-policy-binding "$SVC" --region="$REGION" "${G[@]}" \
       --member=allUsers --role=roles/run.invoker >/dev/null
     ok "Servicio accesible (el control de acceso lo hace el login de la app)"
