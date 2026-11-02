@@ -351,16 +351,20 @@ cmd_promote() {
   local tmp src
   tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' RETURN
   unzip -q "$ZIP" -d "$tmp/src"; rm -rf "$tmp/src/__MACOSX"
+  # Un enlace simbólico en el ZIP podría copiar ficheros de esta máquina (p. ej. ~/.ssh) al repo.
+  find "$tmp/src" -type l | grep -q . && die "El ZIP contiene enlaces simbólicos: no se procesa"
   src="$tmp/src"
   if [[ "$(find "$src" -mindepth 1 -maxdepth 1 | wc -l | tr -d ' ')" == "1" ]]; then
     local only; only="$(find "$src" -mindepth 1 -maxdepth 1)"
     [[ -d "$only" ]] && src="$only"
   fi
-  rsync -a \
+  rsync -a --no-links \
     --exclude='.git' --exclude='.github' --exclude='node_modules' --exclude='dist' \
     --exclude='cloudbuild.yaml' --exclude='CLAUDE.md' --exclude='AGENTS.md' --exclude='GEMINI.md' \
     --exclude='.gitleaks.toml' --exclude='public/serve.json' --exclude='.claude' \
     --exclude='.gitignore' --exclude='README.md' \
+    --exclude='.pnpmfile.cjs' --exclude='.pnpmfile.mjs' --exclude='.npmrc' --exclude='.yarnrc*' \
+    --exclude='pnpm-workspace.yaml' \
     --include='.env.example' --exclude='.env*' \
     "$src"/ ./
   if [[ -f "$src/README.md" ]]; then mkdir -p docs; cp "$src/README.md" docs/README-ai-studio.md; fi
@@ -396,7 +400,7 @@ cmd_promote() {
   if [[ -f package.json ]]; then
     if   [[ -f package-lock.json ]]; then pnpm import >/dev/null && rm -f package-lock.json; ok "package-lock.json convertido a pnpm"
     elif [[ -f yarn.lock ]];         then pnpm import >/dev/null && rm -f yarn.lock;         ok "yarn.lock convertido a pnpm"
-    elif [[ ! -f pnpm-lock.yaml ]];  then pnpm install --lockfile-only >/dev/null;          ok "pnpm-lock.yaml generado"
+    elif [[ ! -f pnpm-lock.yaml ]];  then pnpm install --lockfile-only --ignore-pnpmfile --ignore-scripts >/dev/null; ok "pnpm-lock.yaml generado"
     fi
     rm -f bun.lock bun.lockb
 
@@ -405,7 +409,7 @@ cmd_promote() {
       if [[ -n "$server" ]]; then
         warn "Hay $server pero no script 'start': añade uno que lo arranque antes de desplegar"
       else
-        pnpm add serve >/dev/null
+        pnpm add serve --ignore-scripts >/dev/null
         jq '.scripts.start = "serve -s dist -l $PORT"' package.json > package.json.tmp && mv package.json.tmp package.json
         ok "Añadido script start que sirve dist/ en \$PORT"
       fi
