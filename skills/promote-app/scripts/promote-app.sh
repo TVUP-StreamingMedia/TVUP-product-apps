@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # promote-app.sh — Promoción y despliegue de apps internas de Producto (TVUP)
 #
-#   crear    → paso 0: repo de la app desde la plantilla, con el CLAUDE.md del intake,
+#   create   → paso 0: repo de la app desde la plantilla, con el CLAUDE.md del intake,
 #              el código base (login y Firestore según el perfil) y docs/contexto/.
 #              Producto lo importa en AI Studio o lo clona con Claude Code.
 #   promote  → pasos 7-12: del ZIP de AI Studio al repo de la organización,
@@ -30,15 +30,15 @@ sedi()    { if sed --version >/dev/null 2>&1; then sed -i "$@"; else sed -i '' "
 usage() {
   cat <<'EOF'
 Uso:
-  promote-app.sh crear   --claude-md <CLAUDE.md> [--gemini-md <GEMINI.md>] [--app <repo>]
+  promote-app.sh create  --claude-md <CLAUDE.md> [--gemini-md <GEMINI.md>] [--app <repo>]
   promote-app.sh promote --app <repo> --zip <codigo.zip> --claude-md <CLAUDE.md> [opciones]
   promote-app.sh deploy  --app <repo> [opciones]
 
 Opciones:
   --app <nombre>        Nombre del repo en la organización (p. ej. jira-hub)
   --zip <ruta>          ZIP descargado de Google AI Studio            (promote)
-  --claude-md <ruta>    CLAUDE.md generado por el intake              (crear, promote)
-  --gemini-md <ruta>    GEMINI.md generado por el intake, si se usará AI Studio (crear)
+  --claude-md <ruta>    CLAUDE.md generado por el intake              (create, promote)
+  --gemini-md <ruta>    GEMINI.md generado por el intake, si se usará AI Studio (create)
   --subdomain <nombre>  Subdominio bajo apps.tvup.cloud (por defecto, el nombre del servicio)
   --firebase            Añade los dominios a Authorized domains de Firebase (deploy)
   --firestore           Crea la base de datos de la app y despliega sus reglas (deploy)
@@ -77,9 +77,10 @@ while [[ $# -gt 0 ]]; do
     *)            die "Opción desconocida: $1 (usa --help)" ;;
   esac
 done
-[[ "$CMD" =~ ^(crear|promote|deploy)$ ]] || { usage; exit 1; }
-# En crear, el nombre del repo sale por defecto del perfil del intake (línea SERVICIO).
-if [[ "$CMD" == "crear" && -z "$APP" && -f "$CLAUDE_MD" ]]; then
+[[ "$CMD" == "crear" ]] && CMD="create"   # nombre antiguo, se mantiene como alias
+[[ "$CMD" =~ ^(create|promote|deploy)$ ]] || { usage; exit 1; }
+# En create, el nombre del repo sale por defecto del perfil del intake (línea SERVICIO).
+if [[ "$CMD" == "create" && -z "$APP" && -f "$CLAUDE_MD" ]]; then
   APP="$(grep -E '^SERVICIO:' "$CLAUDE_MD" | head -1 | awk '{print $2}')"
 fi
 [[ -n "$APP" ]] || die "Falta --app"
@@ -206,7 +207,7 @@ preflight_github() {
 
 
 # ---------------------------------------------------------------- CREAR (paso 0)
-cmd_crear() {
+cmd_create() {
   [[ -f "$CLAUDE_MD" ]] || die "Falta --claude-md o no existe: $CLAUDE_MD"
   need pnpm "npm install -g pnpm"
   CLAUDE_MD="$(cd "$(dirname "$CLAUDE_MD")" && pwd)/$(basename "$CLAUDE_MD")"
@@ -240,7 +241,7 @@ cmd_crear() {
   mkdir -p "$WORK_DIR"
   if [[ -d "$REPO_DIR/.git" ]]; then (cd "$REPO_DIR" && run git pull --ff-only)
   else run git clone "https://github.com/$REPO.git" "$REPO_DIR"; fi
-  [[ "$DRY_RUN" == "1" ]] && { warn "dry-run: el resto de crear necesita el repo clonado"; return; }
+  [[ "$DRY_RUN" == "1" ]] && { warn "dry-run: el resto de create necesita el repo clonado"; return; }
   cd "$REPO_DIR"
 
   step "Reglas del intake"
@@ -267,10 +268,13 @@ cmd_crear() {
     write_firebase_config
     cp "$SK/firestore-tvup/assets/firebase.ts" src/lib/firebase.ts
     if [[ "$login" == "1" ]]; then
-      mkdir -p src/components
+      mkdir -p src/components src/assets
       cp "$SK/login-microsoft365/assets/login.ts" src/lib/login.ts
       cp "$SK/login-microsoft365/assets/ConLogin.tsx" src/components/ConLogin.tsx
-      ok "Login Microsoft 365: src/lib/login.ts y src/components/ConLogin.tsx, envolviendo la app"
+      cp "$SK/login-microsoft365/assets/login.css" src/components/login.css
+      cp "$SK/login-microsoft365/assets/tvup-logo.png" src/assets/tvup-logo.png
+      sedi "s|__APP__|$APP|g" src/components/ConLogin.tsx
+      ok "Login Microsoft 365 con la pantalla de TVUP: src/lib/login.ts y src/components/ConLogin.tsx, envolviendo la app"
     fi
     if [[ "$db" == "1" ]]; then
       cp "$SK/firestore-tvup/assets/firestore.ts" src/lib/firestore.ts
@@ -335,7 +339,7 @@ cmd_promote() {
   # Paso 7 — repo desde la plantilla
   step "Paso 7 · Crear $REPO desde la plantilla"
   if gh repo view "$REPO" >/dev/null 2>&1; then
-    ok "El repo ya existe (creado con 'crear'): el código del ZIP se añade a él"
+    ok "El repo ya existe (creado con 'create'): el código del ZIP se añade a él"
   else
     run gh repo create "$REPO" --template "$ORG/$TEMPLATE_REPO" --private
     [[ "$DRY_RUN" == "1" ]] || sleep 5   # GitHub tarda unos segundos en poblar la plantilla
@@ -651,7 +655,7 @@ EOF
 }
 
 case "$CMD" in
-  crear)   cmd_crear ;;
+  create)  cmd_create ;;
   promote) cmd_promote ;;
   deploy)  cmd_deploy ;;
 esac

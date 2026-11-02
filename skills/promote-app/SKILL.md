@@ -41,7 +41,7 @@ Comprueba, sin preguntar lo que puedas averiguar tú:
 Cuando Producto entrega los ficheros del intake (antes de construir nada):
 
 ```bash
-scripts/promote-app.sh crear --claude-md <CLAUDE.md> [--gemini-md <GEMINI.md>] --dry-run
+scripts/promote-app.sh create --claude-md <CLAUDE.md> [--gemini-md <GEMINI.md>] --dry-run
 ```
 
 `--gemini-md` solo si la app se construirá en AI Studio. El nombre del repo sale del perfil
@@ -66,7 +66,7 @@ Ejecuta primero en seco y enseña al usuario qué va a pasar:
 scripts/promote-app.sh promote --app <app> --zip <zip> --claude-md <CLAUDE.md> --dry-run
 ```
 
-Si el repo se creó con `crear` (lo normal), el código del ZIP se añade a ese mismo repo. El
+Si el repo se creó con `create` (lo normal), el código del ZIP se añade a ese mismo repo. El
 script no deja que el ZIP pise los ficheros de gobierno y reescribe `firebase-config.ts` con el
 proyecto estándar, porque AI Studio puede haberlo apuntado a su propio Firebase. Si el usuario
 pregunta por qué cambió ese fichero, explícaselo.
