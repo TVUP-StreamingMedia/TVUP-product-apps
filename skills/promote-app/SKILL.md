@@ -100,10 +100,12 @@ Esta es la parte que el script no hace.
 **Dos decisiones son siempre del usuario, en el chat, antes de pasar la opción:**
 
 - `--approve`: aprobar el build de producción. Pregúntalo explícitamente.
-- `--login-ok`: solo para N1/N2. Antes de preguntarlo, comprueba tú en el
-  código que existe el login de Microsoft 365 (proveedor `microsoft.com`,
-  restricción de tenant) y dile lo que has encontrado. Sin login, no lo pases:
-  la app quedaría abierta a cualquiera con la URL.
+- `--login-ok`: solo para N1/N2. Antes de preguntarlo, mira `LOGIN CORPORATIVO:` en el
+  `CLAUDE.md` de la app y comprueba tú en el código que ese login existe. Con Microsoft 365:
+  proveedor `microsoft.com`, restricción de tenant y `ConLogin` envolviendo la app. Con otro
+  tipo (invitados, plataforma, federado), el que describe su sección «Login». Dile al usuario
+  lo que has encontrado. Sin login, no lo pases: la app quedaría abierta a cualquiera con la URL.
+  Si el login está «por decidir con Ingeniería», el script no la hace pública en ningún caso.
 
 ```bash
 scripts/promote-app.sh deploy --app <app> [--firebase] [--firestore] [--approve] [--login-ok]
