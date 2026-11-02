@@ -575,13 +575,15 @@ cmd_deploy() {
       ok "La base de datos '$SVC' ya existe"
     fi
     local fsdir; fsdir="$(mktemp -d)"
-    git clone -q --depth 1 "https://github.com/$REPO.git" "$fsdir"
-    [[ -f "$fsdir/firebase.json" && -f "$fsdir/firestore.rules" ]] \
-      || die "El repo debe tener firebase.json y firestore.rules (skill firestore-tvup)"
-    jq -e --arg d "$SVC" '.firestore | (if type=="array" then . else [.] end) | any(.database == $d)' \
-      "$fsdir/firebase.json" >/dev/null || die "firebase.json debe declarar la base de datos '$SVC'"
-    grep -q 'if true' "$fsdir/firestore.rules" && die "firestore.rules contiene 'if true': no se despliega"
-    (cd "$fsdir" && firebase deploy --only firestore --project "$FIREBASE_PROJECT" --non-interactive >/dev/null) \
+    git clone -q --depth 1 "https://github.com/$REPO.git" "$fsdir/repo"
+    [[ -f "$fsdir/repo/firestore.rules" && ! -L "$fsdir/repo/firestore.rules" ]] \
+      || die "El repo debe tener firestore.rules (skill firestore-tvup)"
+    grep -q 'if true' "$fsdir/repo/firestore.rules" && die "firestore.rules contiene 'if true': no se despliega"
+    # Del repo solo se usan las reglas: el firebase.json lo escribe el script, con la base de datos
+    # de esta app y nada más (sin hooks predeploy ni bases de datos de otras apps).
+    mkdir "$fsdir/deploy" && cp "$fsdir/repo/firestore.rules" "$fsdir/deploy/firestore.rules"
+    jq -n --arg d "$SVC" '{firestore:[{database:$d, rules:"firestore.rules"}]}' > "$fsdir/deploy/firebase.json"
+    (cd "$fsdir/deploy" && firebase deploy --only firestore --project "$FIREBASE_PROJECT" --non-interactive >/dev/null) \
       || die "No se pudieron desplegar las reglas de Firestore"
     rm -rf "$fsdir"
     ok "Reglas de Firestore desplegadas"

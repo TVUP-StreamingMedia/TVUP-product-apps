@@ -171,12 +171,14 @@ deploy_rules() {
   need firebase "npm install -g firebase-tools"
   [[ "$FIREBASE_PROJECT" != "CAMBIAR" ]] || die "Configura FIREBASE_PROJECT"
   dir="$(mktemp -d)"
-  git clone -q "https://github.com/$REPO.git" "$dir" && git -C "$dir" checkout -q "$sha"
-  [[ -f "$dir/firebase.json" && -f "$dir/firestore.rules" ]] || die "Faltan firebase.json o firestore.rules en ${sha:0:7}"
-  jq -e --arg d "$SVC" '.firestore | (if type=="array" then . else [.] end) | any(.database == $d)' \
-    "$dir/firebase.json" >/dev/null || die "firebase.json debe declarar la base de datos '$SVC'"
-  grep -q 'if true' "$dir/firestore.rules" && die "firestore.rules contiene 'if true': no se despliega"
-  (cd "$dir" && firebase deploy --only firestore --project "$FIREBASE_PROJECT" --non-interactive >/dev/null) \
+  git clone -q "https://github.com/$REPO.git" "$dir/repo" && git -C "$dir/repo" checkout -q "$sha"
+  [[ -f "$dir/repo/firestore.rules" && ! -L "$dir/repo/firestore.rules" ]] || die "Falta firestore.rules en ${sha:0:7}"
+  grep -q 'if true' "$dir/repo/firestore.rules" && die "firestore.rules contiene 'if true': no se despliega"
+  # Del repo solo se usan las reglas: el firebase.json lo escribe el script, con la base de datos
+  # de esta app y nada más (sin hooks predeploy ni bases de datos de otras apps).
+  mkdir "$dir/deploy" && cp "$dir/repo/firestore.rules" "$dir/deploy/firestore.rules"
+  jq -n --arg d "$SVC" '{firestore:[{database:$d, rules:"firestore.rules"}]}' > "$dir/deploy/firebase.json"
+  (cd "$dir/deploy" && firebase deploy --only firestore --project "$FIREBASE_PROJECT" --non-interactive >/dev/null) \
     || die "No se pudieron desplegar las reglas de Firestore"
   rm -rf "$dir"
   ok "Reglas de Firestore desplegadas"
