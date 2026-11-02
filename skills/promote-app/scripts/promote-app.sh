@@ -267,10 +267,13 @@ cmd_crear() {
     write_firebase_config
     cp "$SK/firestore-tvup/assets/firebase.ts" src/lib/firebase.ts
     if [[ "$login" == "1" ]]; then
-      mkdir -p src/components
+      mkdir -p src/components src/assets
       cp "$SK/login-microsoft365/assets/login.ts" src/lib/login.ts
       cp "$SK/login-microsoft365/assets/ConLogin.tsx" src/components/ConLogin.tsx
-      ok "Login Microsoft 365: src/lib/login.ts y src/components/ConLogin.tsx, envolviendo la app"
+      cp "$SK/login-microsoft365/assets/login.css" src/components/login.css
+      cp "$SK/login-microsoft365/assets/tvup-logo.png" src/assets/tvup-logo.png
+      sedi "s|__APP__|$APP|g" src/components/ConLogin.tsx
+      ok "Login Microsoft 365 con la pantalla de TVUP: src/lib/login.ts y src/components/ConLogin.tsx, envolviendo la app"
     fi
     if [[ "$db" == "1" ]]; then
       cp "$SK/firestore-tvup/assets/firestore.ts" src/lib/firestore.ts
