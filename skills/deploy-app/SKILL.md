@@ -12,6 +12,9 @@ trabajo es que el usuario apruebe sabiendo exactamente qué entra.
 Todo pasa por `scripts/release.sh`. No apruebes builds, no muevas tráfico ni
 despliegues reglas con comandos sueltos.
 
+Los subcomandos son `status`, `summary`, `approve`, `reject` y `rollback`. Los nombres
+antiguos en español (`estado`, `resumen`, `aprobar`, `rechazar`) siguen funcionando como alias.
+
 Si el trigger no existe, la app no está promocionada: usa `promote-app`.
 
 Solo la usa Ingeniería.
@@ -19,7 +22,7 @@ Solo la usa Ingeniería.
 ## 1. Ver qué hay
 
 ```bash
-scripts/release.sh estado --app <app>
+scripts/release.sh status --app <app>
 ```
 
 Si no hay builds pendientes y el usuario esperaba uno, lo más probable es que
@@ -29,7 +32,7 @@ Dilo así; no lances builds por tu cuenta.
 ## 2. Resumir lo que entra
 
 ```bash
-scripts/release.sh resumen --app <app> [--build <id>]
+scripts/release.sh summary --app <app> [--build <id>]
 ```
 
 Presenta al usuario, en pocas líneas:
@@ -58,11 +61,11 @@ qué permiten de nuevo.
 **Pregunta siempre antes, con el resumen delante.** Aprobar cambia producción.
 
 ```bash
-scripts/release.sh aprobar  --app <app> --build <id>
-scripts/release.sh rechazar --app <app> --build <id>
+scripts/release.sh approve --app <app> --build <id>
+scripts/release.sh reject  --app <app> --build <id>
 ```
 
-`aprobar` espera a que termine el build, devuelve el tráfico a la versión nueva,
+`approve` espera a que termine el build, devuelve el tráfico a la versión nueva,
 despliega las reglas de Firestore si cambiaron y comprueba que la URL responde.
 
 Si el build falla, lee el log que indica el script y busca la causa en
@@ -81,7 +84,7 @@ Pide confirmación antes de pasar `--yes`. Explica dos cosas al usuario:
 
 - La vuelta atrás afecta al código, **no a las reglas de Firestore ni a los
   datos**. Si el problema estaba en las reglas, hay que corregirlas con un PR.
-- El tráfico queda fijado a la versión anterior hasta el siguiente `aprobar`.
+- El tráfico queda fijado a la versión anterior hasta el siguiente `approve`.
 
 ## Lo que no haces nunca
 
