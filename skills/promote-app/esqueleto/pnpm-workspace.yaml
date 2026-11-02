@@ -1,0 +1,11 @@
+# pnpm 11+: dependencias autorizadas a ejecutar scripts de instalación.
+# Las demás se bloquean por defecto (protección de la cadena de suministro).
+allowBuilds:
+  esbuild: true
+  "@firebase/util": true
+  protobufjs: true
+
+# Versiones corregidas de dependencias indirectas con vulnerabilidades conocidas.
+overrides:
+  compression: ">=1.8.2"
+  "@grpc/grpc-js": ">=1.13.6"
