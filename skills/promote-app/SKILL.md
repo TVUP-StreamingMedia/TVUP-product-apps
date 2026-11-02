@@ -115,7 +115,7 @@ Al terminar, da al usuario la URL definitiva y recuérdale el último paso
 manual: abrirla en incógnito y comprobar que pide login antes de mostrar nada.
 
 Esta fase solo se hace una vez por app. Los despliegues siguientes, tras cada
-merge en `main`, van con la skill `desplegar-app`.
+merge en `main`, van con la skill `deploy-app`.
 El certificado puede tardar en emitirse; un error de certificado justo después
 no es un fallo.
 
