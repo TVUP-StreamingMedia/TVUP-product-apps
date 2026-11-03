@@ -120,6 +120,10 @@ if [[ -z "$SVC" ]] && command -v gh >/dev/null 2>&1; then
 fi
 [[ -n "$SVC" ]] || SVC="$(echo "$APP" | tr '[:upper:]' '[:lower:]' | tr '_' '-' | sed -E 's/[^a-z0-9-]//g; s/^-+//; s/-+$//')"
 [[ "$SVC" =~ ^[a-z][a-z0-9-]*$ && ${#SVC} -le 49 ]] || die "Nombre de servicio no válido: '$SVC'"
+# Excepciones aprobadas para esta app (apps/<servicio>.env): proyecto Firebase y base de datos.
+# shellcheck source=app-overrides.sh
+source "$SCRIPT_DIR/app-overrides.sh"
+load_app_overrides "$SVC"
 SUB="${SUB:-$SVC}"
 FQDN="$SUB.$APPS_DOMAIN"
 REPO="$ORG/$APP"
@@ -151,6 +155,11 @@ tier_from() {
 # Se usa al crear el repo y al promocionar (el ZIP de AI Studio puede traer la config de otro proyecto).
 write_firebase_config() {
   local f="src/lib/firebase-config.ts"
+  # Con un proyecto Firebase propio, apiKey y appId del estándar no valen: no se reescribe.
+  if [[ "$FIREBASE_OVERRIDE" == "1" ]]; then
+    warn "La app usa el proyecto Firebase $FIREBASE_PROJECT (excepción): $f no se reescribe"
+    return 0
+  fi
   mkdir -p src/lib
   cat > "$f" <<CFG
 // Config pública del SDK web de Firebase. NO es un secreto: identifica el proyecto, y la
@@ -163,15 +172,15 @@ export const firebaseConfig = {
   appId: "$FIREBASE_APP_ID",
 };
 
-// Base de datos propia de esta app = nombre del servicio.
-export const DATABASE_ID = "$SVC";
+// Base de datos propia de esta app = nombre del servicio, salvo excepción aprobada.
+export const DATABASE_ID = "$FIRESTORE_DATABASE";
 
 // Login corporativo. Mantener DOMINIO_CORPORATIVO igual que en firestore.rules.
 export const DOMINIO_CORPORATIVO = "$DOMINIO_CORPORATIVO";
 export const MICROSOFT_TENANT_ID = "$MICROSOFT_TENANT_ID";
 CFG
   if grep -q CAMBIAR "$f"; then warn "Faltan valores de Firebase en $CONFIG_FILE: firebase-config.ts lleva CAMBIAR"
-  else ok "src/lib/firebase-config.ts apunta al proyecto estándar ($FIREBASE_PROJECT), base '$SVC'"; fi
+  else ok "src/lib/firebase-config.ts apunta al proyecto estándar ($FIREBASE_PROJECT), base '$FIRESTORE_DATABASE'"; fi
 }
 
 # Rellena cloudbuild.yaml y README.md de la plantilla con los valores de la app.
@@ -323,10 +332,10 @@ cmd_create() {
     if [[ "$db" == "1" ]]; then
       cp "$SK/firestore-tvup/assets/firestore.ts" src/lib/firestore.ts
       cp "$SK/firestore-tvup/assets/firestore.rules" firestore.rules
-      jq --arg d "$SVC" '.firestore[0].database = $d' "$SK/firestore-tvup/assets/firebase.json" > firebase.json
+      jq --arg d "$FIRESTORE_DATABASE" '.firestore[0].database = $d' "$SK/firestore-tvup/assets/firebase.json" > firebase.json
       local dom_re; dom_re="$(printf '%s' "$DOMINIO_CORPORATIVO" | sed 's/\./[.]/g')"
       sedi "s|tvup\\[\\.\\]media|$dom_re|" firestore.rules
-      ok "Firestore: src/lib/firestore.ts, firestore.rules y firebase.json (base '$SVC')"
+      ok "Firestore: src/lib/firestore.ts, firestore.rules y firebase.json (base '$FIRESTORE_DATABASE')"
     fi
     (pnpm add firebase >/dev/null 2>&1 && ok "Dependencia firebase añadida") || warn "No se pudo añadir firebase con pnpm"
   fi
@@ -647,15 +656,18 @@ cmd_deploy() {
   # Firestore: una base de datos con nombre por app dentro del proyecto Firebase estándar.
   # Cada base tiene sus propias reglas, así que las apps no se pisan entre sí.
   if [[ "$FIRESTORE" == "1" ]]; then
-    step "Firestore · base de datos '$SVC' y sus reglas"
+    step "Firestore · base de datos '$FIRESTORE_DATABASE' ($FIREBASE_PROJECT) y sus reglas"
     need firebase "npm install -g firebase-tools"
     [[ "$FIREBASE_PROJECT" != "CAMBIAR" ]] || die "Configura FIREBASE_PROJECT en $CONFIG_FILE"
-    if ! gcloud firestore databases describe --database="$SVC" --project "$FIREBASE_PROJECT" >/dev/null 2>&1; then
-      gcloud firestore databases create --database="$SVC" --location="$REGION" --type=firestore-native \
+    if ! gcloud firestore databases describe --database="$FIRESTORE_DATABASE" --project "$FIREBASE_PROJECT" >/dev/null 2>&1; then
+      # Una excepción apunta a una base que ya tiene datos: si no existe, algo está mal configurado.
+      [[ "$FIREBASE_OVERRIDE" == "0" && "$FIRESTORE_DATABASE" == "$SVC" ]] \
+        || die "No existe la base '$FIRESTORE_DATABASE' en $FIREBASE_PROJECT: revisa apps/$SVC.env"
+      gcloud firestore databases create --database="$FIRESTORE_DATABASE" --location="$REGION" --type=firestore-native \
         --project "$FIREBASE_PROJECT" >/dev/null
-      ok "Base de datos '$SVC' creada en $REGION"
+      ok "Base de datos '$FIRESTORE_DATABASE' creada en $REGION"
     else
-      ok "La base de datos '$SVC' ya existe"
+      ok "La base de datos '$FIRESTORE_DATABASE' ya existe"
     fi
     local fsdir; fsdir="$(mktemp -d)"
     git clone -q --depth 1 "https://github.com/$REPO.git" "$fsdir/repo"
@@ -666,7 +678,7 @@ cmd_deploy() {
     # Del repo solo se usan las reglas: el firebase.json lo escribe el script, con la base de datos
     # de esta app y nada más (sin hooks predeploy ni bases de datos de otras apps).
     mkdir "$fsdir/deploy" && cp "$fsdir/repo/firestore.rules" "$fsdir/deploy/firestore.rules"
-    jq -n --arg d "$SVC" '{firestore:[{database:$d, rules:"firestore.rules"}]}' > "$fsdir/deploy/firebase.json"
+    jq -n --arg d "$FIRESTORE_DATABASE" '{firestore:[{database:$d, rules:"firestore.rules"}]}' > "$fsdir/deploy/firebase.json"
     (cd "$fsdir/deploy" && firebase deploy --only firestore --project "$FIREBASE_PROJECT" --non-interactive >/dev/null) \
       || die "No se pudieron desplegar las reglas de Firestore"
     rm -rf "$fsdir"

@@ -121,6 +121,22 @@ merge en `main`, van con la skill `deploy-app`.
 El certificado puede tardar en emitirse; un error de certificado justo después
 no es un fallo.
 
+## Excepciones por app (Firebase propio)
+
+Algunas apps anteriores al proceso tienen sus datos en otro proyecto Firebase o en la base
+`(default)`. Migrarlas exigiría mover datos y UID de Auth, así que se admiten como excepción:
+
+- Se declaran en `scripts/apps/<servicio>.env`, en un PR de este repo que aprueba Ingeniería.
+- Solo admite `FIREBASE_PROJECT="..."` y `FIRESTORE_DATABASE="..."`. El fichero no se ejecuta:
+  se leen esas dos claves con su valor validado, y cualquier otra cosa para el script.
+- Con un proyecto propio, el script **no reescribe** `src/lib/firebase-config.ts` (apiKey y appId
+  del estándar no valen) y **no crea** la base de datos: si no existe, se para.
+- `--firebase` autoriza los dominios y `--firestore` despliega las reglas en ese proyecto y esa base.
+  Tu cuenta necesita permisos en ese proyecto.
+- `deploy-app` usa la misma excepción, cargada después de comprobar que el trigger despliega el repo.
+
+Antes de lanzar `deploy` en una app con excepción, díselo al usuario y enséñale el fichero.
+
 ## Lo que no haces nunca
 
 - Aprobar un build o hacer pública una app sin confirmación explícita en el chat.

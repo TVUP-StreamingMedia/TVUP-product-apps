@@ -53,7 +53,9 @@ explícitamente:
 | Cambian ficheros de gobierno | `CLAUDE.md`, `cloudbuild.yaml`, `.github/` o `firebase.json` solo debe cambiarlos Ingeniería |
 
 Un cambio en `firestore.rules` no para la recomendación, pero avisa: se
-desplegará junto con la app. Si puedes, lee el diff de las reglas y explica
+desplegará junto con la app. Si la app tiene excepción en
+`promote-app/scripts/apps/<servicio>.env`, las reglas van a ese proyecto y esa base
+de datos (el script lo avisa): dilo en el resumen. Si puedes, lee el diff de las reglas y explica
 qué permiten de nuevo.
 
 ## 3. Aprobar o rechazar
