@@ -575,8 +575,20 @@ cmd_deploy() {
       [[ -n "$mine" && "$mine" == "$(linked_repo_id "$trigger_repo")" ]] \
         || die "El trigger $trigger despliega otro repo (${trigger_repo##*/}), no $REPO. Revisa SERVICIO en el CLAUDE.md o usa --service"
       warn "El repo se renombró: el trigger $trigger escucha ${trigger_repo##*/}; se cambia a $cb_repo"
-      run gcloud builds triggers update github "$trigger" --region="$CB_REGION" --repository="$cb_path" \
-        --branch-pattern='^main$' "${G[@]}"
+      # gcloud manda la máscara de 1.ª generación (github.push.branch) y la API la rechaza con
+      # INVALID_ARGUMENT: se cambia solo el repositorio por la API de Cloud Build.
+      if [[ "$DRY_RUN" == "1" ]]; then
+        echo "  [dry-run] PATCH triggers/$trigger?updateMask=repositoryEventConfig → $cb_repo"
+      else
+        jq -n --arg r "$cb_path" '{repositoryEventConfig: {repository: $r, push: {branch: "^main$"}}}' \
+          | curl -sf -X PATCH -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+              -H "Content-Type: application/json" --data-binary @- \
+              "https://cloudbuild.googleapis.com/v1/projects/$GCP_PROJECT/locations/$CB_REGION/triggers/$trigger?updateMask=repositoryEventConfig" >/dev/null \
+          || die "No se pudo cambiar el repositorio del trigger $trigger"
+        [[ "$(gcloud builds triggers describe "$trigger" --region="$CB_REGION" "${G[@]}" \
+              --format='value(repositoryEventConfig.repository)')" == "$cb_path" ]] \
+          || die "El trigger $trigger no quedó apuntando a $cb_repo"
+      fi
       ok "Trigger $trigger apuntando a $cb_repo"
     fi
   else
