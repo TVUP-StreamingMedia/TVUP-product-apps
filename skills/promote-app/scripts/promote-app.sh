@@ -35,7 +35,8 @@ Uso:
   promote-app.sh deploy  --app <repo> [opciones]
 
 Opciones:
-  --app <nombre>        Nombre del repo en la organización (p. ej. jira-hub)
+  --app <nombre>        Nombre del repo en la organización (p. ej. TVUP-jira-hub)
+  --service <nombre>    Servicio de Cloud Run (por defecto, la línea SERVICIO del CLAUDE.md)
   --zip <ruta>          ZIP descargado de Google AI Studio            (promote)
   --claude-md <ruta>    CLAUDE.md generado por el intake              (create, promote)
   --gemini-md <ruta>    GEMINI.md generado por el intake, si se usará AI Studio (create)
@@ -58,10 +59,11 @@ EOF
 
 # ---------------------------------------------------------------- argumentos
 CMD="${1:-}"; [[ $# -gt 0 ]] && shift
-APP=""; ZIP=""; CLAUDE_MD=""; GEMINI_MD=""; SUB=""; FIREBASE=0; FIRESTORE=0; REUSE=0; APPROVE=0; LOGIN_OK=0; SIN_DNS=0; DRY_RUN="${DRY_RUN:-0}"
+APP=""; SVC_ARG=""; ZIP=""; CLAUDE_MD=""; GEMINI_MD=""; SUB=""; FIREBASE=0; FIRESTORE=0; REUSE=0; APPROVE=0; LOGIN_OK=0; SIN_DNS=0; DRY_RUN="${DRY_RUN:-0}"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --app)        APP="$2"; shift 2 ;;
+    --service)    SVC_ARG="$2"; shift 2 ;;
     --zip)        ZIP="$2"; shift 2 ;;
     --claude-md)  CLAUDE_MD="$2"; shift 2 ;;
     --gemini-md)  GEMINI_MD="$2"; shift 2 ;;
@@ -92,7 +94,31 @@ source "$CONFIG_FILE"
 CB_REGION="${CB_REGION:-$REGION}"
 
 # Nombre del servicio Cloud Run: minúsculas, números y guiones; máximo 49 caracteres.
-SVC="$(echo "$APP" | tr '[:upper:]' '[:lower:]' | tr '_' '-' | sed -E 's/[^a-z0-9-]//g; s/^-+//; s/-+$//')"
+# Sale de la línea SERVICIO del perfil del intake, no del nombre del repo: el repo puede
+# llamarse TVUP-x y el servicio x. Orden: --service, CLAUDE.md local, CLAUDE.md del repo y,
+# si no hay perfil, el nombre del repo.
+# ID de GitHub de un repo. Se conserva al renombrar, así que identifica el repo mejor que el nombre.
+# Solo devuelve un ID numérico: un error o un "null" no pueden coincidir y dar el repo por bueno.
+gh_repo_id() { local id; id="$(gh api "repos/$1" --jq .id 2>/dev/null)" && [[ "$id" =~ ^[0-9]+$ ]] && echo "$id" || true; }
+# ID de GitHub del repo enlazado a un recurso de Cloud Build (projects/.../connections/C/repositories/R).
+linked_repo_id() {
+  local conn uri
+  conn="$(sed -E 's#.*/connections/([^/]+)/repositories/.*#\1#' <<<"$1")"
+  uri="$(gcloud builds repositories describe "${1##*/}" --connection="$conn" --region="$CB_REGION" "${G[@]}" \
+         --format='value(remoteUri)' 2>/dev/null || true)"
+  uri="${uri#https://github.com/}"; uri="${uri%.git}"
+  if [[ -n "$uri" ]]; then gh_repo_id "$uri"; fi
+}
+servicio_de() { grep -E '^SERVICIO:' "$1" 2>/dev/null | head -1 | awk '{print $2}' || true; }
+SVC="$SVC_ARG"
+[[ -z "$SVC" && -f "$CLAUDE_MD" ]] && SVC="$(servicio_de "$CLAUDE_MD")"
+if [[ -z "$SVC" ]] && command -v gh >/dev/null 2>&1; then
+  perfil_tmp="$(mktemp)"
+  gh api -H "Accept: application/vnd.github.raw" "repos/$ORG/$APP/contents/CLAUDE.md" > "$perfil_tmp" 2>/dev/null \
+    && SVC="$(servicio_de "$perfil_tmp")"
+  rm -f "$perfil_tmp"
+fi
+[[ -n "$SVC" ]] || SVC="$(echo "$APP" | tr '[:upper:]' '[:lower:]' | tr '_' '-' | sed -E 's/[^a-z0-9-]//g; s/^-+//; s/-+$//')"
 [[ "$SVC" =~ ^[a-z][a-z0-9-]*$ && ${#SVC} -le 49 ]] || die "Nombre de servicio no válido: '$SVC'"
 SUB="${SUB:-$SVC}"
 FQDN="$SUB.$APPS_DOMAIN"
@@ -234,7 +260,7 @@ cmd_create() {
   [[ -n "$tier" ]] || die "El CLAUDE.md no tiene el perfil del intake relleno (TIER DE INTAKE)"
   perfil_svc="$(grep -E '^SERVICIO:' "$CLAUDE_MD" | head -1 | awk '{print $2}')"
   if [[ -n "$perfil_svc" && "$perfil_svc" != "$SVC" ]]; then
-    die "El intake dice SERVICIO '$perfil_svc' y el repo daría '$SVC'. Usa --app $perfil_svc o rehaz el intake con el nombre correcto"
+    die "El intake dice SERVICIO '$perfil_svc' y --service dice '$SVC'. Quita --service o rehaz el intake con el nombre correcto"
   fi
   local login_tipo; login_tipo="$(login_from "$CLAUDE_MD")"
   [[ "$login_tipo" == "m365" ]] && login=1
@@ -537,9 +563,27 @@ cmd_deploy() {
   # Paso 19 — trigger con aprobación obligatoria
   step "Paso 19 · Trigger de despliegue con aprobación"
   local trigger="$SVC-prod"
-  if gcloud builds triggers describe "$trigger" --region="$CB_REGION" "${G[@]}" >/dev/null 2>&1; then
-    ok "El trigger $trigger ya existe"
+  local trigger_repo
+  if trigger_repo="$(gcloud builds triggers describe "$trigger" --region="$CB_REGION" "${G[@]}" \
+                       --format='value(repositoryEventConfig.repository)' 2>/dev/null)"; then
+    if [[ "$trigger_repo" == "$cb_path" ]]; then
+      ok "El trigger $trigger ya existe"
+    else
+      # Solo si es el mismo repo renombrado (mismo ID de GitHub). SERVICIO sale del CLAUDE.md, que
+      # puede editar quien escribe en el repo: sin esta comprobación, se robaría el trigger de otra app.
+      local mine; mine="$(gh_repo_id "$REPO")"
+      [[ -n "$mine" && "$mine" == "$(linked_repo_id "$trigger_repo")" ]] \
+        || die "El trigger $trigger despliega otro repo (${trigger_repo##*/}), no $REPO. Revisa SERVICIO en el CLAUDE.md o usa --service"
+      warn "El repo se renombró: el trigger $trigger escucha ${trigger_repo##*/}; se cambia a $cb_repo"
+      run gcloud builds triggers update github "$trigger" --region="$CB_REGION" --repository="$cb_path" \
+        --branch-pattern='^main$' "${G[@]}"
+      ok "Trigger $trigger apuntando a $cb_repo"
+    fi
   else
+    # Un servicio que ya existe sin trigger de este proceso es de otra app (o de un despliegue antiguo).
+    if gcloud run services describe "$SVC" --region="$REGION" "${G[@]}" >/dev/null 2>&1; then
+      die "Ya existe el servicio $SVC y ningún trigger de este proceso lo despliega. Revisa SERVICIO o, si es una migración, coordínala con Ingeniería"
+    fi
     local args=(builds triggers create github --name="$trigger" --region="$CB_REGION" --repository="$cb_path"
                 --branch-pattern='^main$' --build-config=cloudbuild.yaml --require-approval "${G[@]}")
     [[ -n "$CB_SERVICE_ACCOUNT" ]] && args+=(--service-account="$CB_SERVICE_ACCOUNT")
