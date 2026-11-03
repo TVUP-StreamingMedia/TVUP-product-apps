@@ -596,7 +596,8 @@ cmd_deploy() {
     git clone -q --depth 1 "https://github.com/$REPO.git" "$fsdir/repo"
     [[ -f "$fsdir/repo/firestore.rules" && ! -L "$fsdir/repo/firestore.rules" ]] \
       || die "El repo debe tener firestore.rules (skill firestore-tvup)"
-    grep -q 'if true' "$fsdir/repo/firestore.rules" && die "firestore.rules contiene 'if true': no se despliega"
+    perl "$SCRIPT_DIR/check-rules.pl" "$fsdir/repo/firestore.rules" \
+      || die "firestore.rules deja datos accesibles sin login: no se despliega"
     # Del repo solo se usan las reglas: el firebase.json lo escribe el script, con la base de datos
     # de esta app y nada más (sin hooks predeploy ni bases de datos de otras apps).
     mkdir "$fsdir/deploy" && cp "$fsdir/repo/firestore.rules" "$fsdir/deploy/firestore.rules"

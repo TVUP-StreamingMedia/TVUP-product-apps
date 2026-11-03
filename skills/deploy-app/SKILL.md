@@ -68,6 +68,10 @@ scripts/release.sh reject  --app <app> --build <id>
 `approve` espera a que termine el build, devuelve el tráfico a la versión nueva,
 despliega las reglas de Firestore si cambiaron y comprueba que la URL responde.
 
+Si cambian las reglas de Firestore, `approve` las valida **antes** de aprobar el build:
+deben venir de un PR y cada `allow` debe exigir login (`check-rules.pl`). Si no pasan,
+no se aprueba nada. Explica al usuario qué regla falla; el arreglo va en un PR nuevo.
+
 Si el build falla, lee el log que indica el script y busca la causa en
 `../promote-app/references/errores.md`. Lo habitual es que el arreglo vaya en
 un PR nuevo, no en tocar la infraestructura.

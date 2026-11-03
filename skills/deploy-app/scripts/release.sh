@@ -26,6 +26,9 @@ ok()   { echo "${c_grn}✓ $*${c_off}"; }
 warn() { echo "${c_yel}⚠ $*${c_off}"; }
 die()  { echo "${c_red}✗ $*${c_off}" >&2; exit 1; }
 need() { command -v "$1" >/dev/null 2>&1 || die "Falta '$1'. $2"; }
+# Textos que escribe quien abre el PR (commits, títulos, nombres de fichero): sin caracteres
+# de control, para que no puedan alterar lo que se ve en el terminal antes de aprobar.
+clean() { tr -d '\000-\010\013-\037\177'; }
 
 usage() {
   cat <<'EOF'
@@ -62,7 +65,9 @@ case "$CMD" in estado) CMD=status ;; resumen) CMD=summary ;; aprobar) CMD=approv
 source "$CONFIG_FILE"
 # Cloud Build va en la región de su conexión con GitHub, que puede no ser la de Cloud Run.
 CB_REGION="${CB_REGION:-$REGION}"
-need gcloud ""; need gh ""; need jq ""; need curl ""
+need gcloud ""; need gh ""; need jq ""; need curl ""; need perl ""
+CHECK_RULES="$SCRIPT_DIR/../../promote-app/scripts/check-rules.pl"
+[[ -f "$CHECK_RULES" ]] || die "No encuentro check-rules.pl de promote-app"
 
 SVC="$(echo "$APP" | tr '[:upper:]' '[:lower:]' | tr '_' '-' | sed -E 's/[^a-z0-9-]//g; s/^-+//; s/-+$//')"
 REPO="$ORG/$APP"
@@ -87,6 +92,12 @@ decide_build() {
     -d "{\"approvalResult\":{\"decision\":\"$2\"}}" \
     "https://cloudbuild.googleapis.com/v1/projects/$GCP_PROJECT/locations/$CB_REGION/builds/$1:approve" >/dev/null
 }
+# La API de comparación corta a 300 ficheros y 250 commits. Si la respuesta llega cortada,
+# la lista de ficheros no es fiable y quien llama decide por el lado seguro.
+compare_json() { gh api "repos/$REPO/compare/$1...$2"; }
+truncated() { jq -e '(.files | length) >= 300 or (.commits | length) < .total_commits' <<<"$1" >/dev/null; }
+has_rules() { gh api "repos/$REPO/contents/firestore.rules?ref=$1" --jq .type >/dev/null 2>&1; }
+pr_numbers() { gh api "repos/$REPO/commits/$1/pulls" --jq '.[].number' 2>/dev/null || true; }
 public_url() {
   local d
   d="$(gcloud beta run domain-mappings list --region="$REGION" "${G[@]}" \
@@ -127,25 +138,29 @@ cmd_summary() {
 
   step "Build $BUILD · commit ${head:0:7}"
   if [[ -n "$base" ]]; then
-    cmp="$(gh api "repos/$REPO/compare/$base...$head")"
+    cmp="$(compare_json "$base" "$head")"
     echo "Commits desde el último despliegue (${base:0:7}):"
-    jq -r '.commits[] | "  \(.sha[0:7]) \(.commit.message | split("\n")[0])"' <<<"$cmp"
-    files="$(jq -r '.files[]?.filename' <<<"$cmp")"
+    jq -r '.commits[] | "  \(.sha[0:7]) \(.commit.message | split("\n")[0])"' <<<"$cmp" | clean
+    files="$(jq -r '.files[]?.filename' <<<"$cmp" | clean)"
+    if truncated "$cmp"; then
+      warn "El cambio es demasiado grande para la API de GitHub: las listas de commits y ficheros están incompletas."
+      warn "Revísalo en el repo; 'approve' desplegará las reglas de Firestore por si acaso"
+    fi
   else
     warn "Primer despliegue: no hay versión anterior con la que comparar"
     files=""
   fi
 
   step "Pull Request y revisión de Claude"
-  prs="$(gh api "repos/$REPO/commits/$head/pulls" --jq '.[].number' 2>/dev/null || true)"
+  prs="$(pr_numbers "$head")"
   if [[ -z "$prs" ]]; then
     warn "Este commit NO viene de un PR: se ha subido a main directamente y se ha saltado la revisión"
   else
     local n
     for n in $prs; do
-      echo "  PR #$n · $(gh pr view "$n" --repo "$REPO" --json title -q .title)"
-      gh pr view "$n" --repo "$REPO" --json statusCheckRollup \
-        -q '.statusCheckRollup[] | "    \(.name // .context): \(.conclusion // .state)"' 2>/dev/null || true
+      echo "  PR #$n · $(gh pr view "$n" --repo "$REPO" --json title -q .title | clean)"
+      { gh pr view "$n" --repo "$REPO" --json statusCheckRollup \
+          -q '.statusCheckRollup[] | "    \(.name // .context): \(.conclusion // .state)"' 2>/dev/null || true; } | clean
     done
   fi
 
@@ -168,36 +183,53 @@ cmd_summary() {
 }
 
 # ---------------------------------------------------------------- reglas de Firestore
-deploy_rules() {
+# Se preparan y validan ANTES de aprobar el build: si no son válidas, no se despliega nada.
+RULES_DIR=""
+prepare_rules() {
   local sha="$1" dir
   need firebase "npm install -g firebase-tools"
   [[ "$FIREBASE_PROJECT" != "CAMBIAR" ]] || die "Configura FIREBASE_PROJECT"
+  [[ -n "$(pr_numbers "$sha")" ]] \
+    || die "Las reglas de Firestore cambian en un commit que no viene de un PR: no se despliegan sin revisión"
   dir="$(mktemp -d)"
   git clone -q "https://github.com/$REPO.git" "$dir/repo" && git -C "$dir/repo" checkout -q "$sha"
   [[ -f "$dir/repo/firestore.rules" && ! -L "$dir/repo/firestore.rules" ]] || die "Falta firestore.rules en ${sha:0:7}"
-  grep -q 'if true' "$dir/repo/firestore.rules" && die "firestore.rules contiene 'if true': no se despliega"
+  perl "$CHECK_RULES" "$dir/repo/firestore.rules" \
+    || die "firestore.rules deja datos accesibles sin login: no se despliega (ni el build)"
   # Del repo solo se usan las reglas: el firebase.json lo escribe el script, con la base de datos
   # de esta app y nada más (sin hooks predeploy ni bases de datos de otras apps).
   mkdir "$dir/deploy" && cp "$dir/repo/firestore.rules" "$dir/deploy/firestore.rules"
   jq -n --arg d "$SVC" '{firestore:[{database:$d, rules:"firestore.rules"}]}' > "$dir/deploy/firebase.json"
-  (cd "$dir/deploy" && firebase deploy --only firestore --project "$FIREBASE_PROJECT" --non-interactive >/dev/null) \
+  rm -rf "$dir/repo"
+  RULES_DIR="$dir"
+  ok "Reglas de Firestore válidas"
+}
+deploy_rules() {
+  (cd "$RULES_DIR/deploy" && firebase deploy --only firestore --project "$FIREBASE_PROJECT" --non-interactive >/dev/null) \
     || die "No se pudieron desplegar las reglas de Firestore"
-  rm -rf "$dir"
+  rm -rf "$RULES_DIR"
   ok "Reglas de Firestore desplegadas"
 }
 
 # ---------------------------------------------------------------- approve
 cmd_approve() {
   [[ -n "$BUILD" ]] || die "Falta --build (usa 'summary' para verlo)"
-  local b head base status url code changed=0
+  local b head base cmp status url code changed=0
   b="$(builds_json)"
   [[ "$(jq -r --arg id "$BUILD" '.[]|select(.id==$id)|.status' <<<"$b")" == "PENDING" ]] \
     || die "El build $BUILD no está pendiente de aprobación"
   head="$(sha_of "$BUILD" "$b")"
   base="$(sha_of "$(last_success "$b")" "$b" || true)"
-  if [[ -n "$base" ]] && gh api "repos/$REPO/compare/$base...$head" --jq '.files[]?.filename' | grep -qx 'firestore.rules'; then
-    changed=1
+  if [[ -n "$base" ]]; then
+    cmp="$(compare_json "$base" "$head")"
+    if truncated "$cmp"; then
+      # Lista incompleta: si la app tiene reglas, se despliegan por si han cambiado.
+      has_rules "$head" && changed=1
+    elif jq -r '.files[]?.filename' <<<"$cmp" | grep -qx 'firestore.rules'; then
+      changed=1
+    fi
   fi
+  if [[ "$changed" == "1" || "$RULES" == "1" ]]; then step "Reglas de Firestore"; prepare_rules "$head"; fi
 
   step "Aprobando $BUILD"
   decide_build "$BUILD" APPROVED \
@@ -216,7 +248,7 @@ cmd_approve() {
   gcloud run services update-traffic "$SVC" --to-latest --region="$REGION" "${G[@]}" >/dev/null
   ok "Tráfico en la revisión nueva"
 
-  if [[ "$changed" == "1" || "$RULES" == "1" ]]; then step "Reglas de Firestore"; deploy_rules "$head"; fi
+  if [[ -n "$RULES_DIR" ]]; then step "Reglas de Firestore"; deploy_rules; fi
 
   step "Comprobación"
   url="$(public_url)"
