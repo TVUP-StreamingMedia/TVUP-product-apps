@@ -39,16 +39,19 @@ Uso:
   release.sh reject   --app <repo> --build <id>
   release.sh rollback --app <repo> --yes
 
+--service fija el servicio de Cloud Run; por defecto sale de la línea SERVICIO del CLAUDE.md del repo.
+
 --rules fuerza el despliegue de firestore.rules aunque no hayan cambiado.
 approve, reject y rollback cambian producción: decídelo antes de ejecutarlos.
 EOF
 }
 
 CMD="${1:-}"; [[ $# -gt 0 ]] && shift
-APP=""; BUILD=""; RULES=0; YES=0
+APP=""; SVC_ARG=""; BUILD=""; RULES=0; YES=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --app)    APP="$2"; shift 2 ;;
+    --service) SVC_ARG="$2"; shift 2 ;;
     --build)  BUILD="$2"; shift 2 ;;
     --rules|--reglas) RULES=1; shift ;;
     --yes)    YES=1; shift ;;
@@ -69,8 +72,15 @@ need gcloud ""; need gh ""; need jq ""; need curl ""; need perl ""
 CHECK_RULES="$SCRIPT_DIR/../../promote-app/scripts/check-rules.pl"
 [[ -f "$CHECK_RULES" ]] || die "No encuentro check-rules.pl de promote-app"
 
-SVC="$(echo "$APP" | tr '[:upper:]' '[:lower:]' | tr '_' '-' | sed -E 's/[^a-z0-9-]//g; s/^-+//; s/-+$//')"
 REPO="$ORG/$APP"
+# El servicio sale del perfil del intake (SERVICIO), no del nombre del repo: TVUP-x puede servir x.
+SVC="$SVC_ARG"
+if [[ -z "$SVC" ]]; then
+  SVC="$(gh api -H "Accept: application/vnd.github.raw" "repos/$REPO/contents/CLAUDE.md" 2>/dev/null \
+         | grep -E '^SERVICIO:' | head -1 | awk '{print $2}' || true)"
+fi
+[[ -n "$SVC" ]] || SVC="$(echo "$APP" | tr '[:upper:]' '[:lower:]' | tr '_' '-' | sed -E 's/[^a-z0-9-]//g; s/^-+//; s/-+$//')"
+[[ "$SVC" =~ ^[a-z][a-z0-9-]*$ ]] || die "Nombre de servicio no válido: '$SVC'"
 TRIGGER="$SVC-prod"
 G=(--project "$GCP_PROJECT")
 GOVERNANCE_RE='^(CLAUDE\.md|AGENTS\.md|cloudbuild\.yaml|\.github/|firebase\.json)'

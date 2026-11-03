@@ -23,3 +23,4 @@ Todos han ocurrido al montar el proceso. Busca el mensaje antes de proponer una 
 | `auth/unauthorized-domain` | El dominio no está en el proyecto Firebase que usa la app | Comprobar el `projectId` de `firebase-config.ts` contra `FIREBASE_PROJECT`; deben coincidir |
 | El repo nuevo no aparece en Cloud Build | La GitHub App de Cloud Build no lo ve | Instalarla con acceso a todos los repos |
 | Domain mapping falla por dominio no verificado | La cuenta de gcloud no verificó el dominio de la app ni uno padre (basta `apps.tvup.cloud`) | Verificarlo en Search Console con esa cuenta (`gcloud domains verify apps.tvup.cloud`), o que un propietario la añada como propietaria |
+| Merge en `main` sin build pendiente | El repo se renombró en GitHub y el trigger sigue escuchando el nombre antiguo, sin dar error | `promote-app.sh deploy --app <nombre-nuevo> --dry-run`: vincula el repo nuevo y vuelve a apuntar el trigger; el servicio sale de `SERVICIO` en el CLAUDE.md |
