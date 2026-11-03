@@ -87,7 +87,8 @@ GOVERNANCE_RE='^(CLAUDE\.md|AGENTS\.md|cloudbuild\.yaml|\.github/|firebase\.json
 
 # ---------------------------------------------------------------- datos comunes
 # ID de GitHub de un repo. Se conserva al renombrar, así que identifica el repo mejor que el nombre.
-gh_repo_id() { gh api "repos/$1" --jq .id 2>/dev/null || true; }
+# Solo devuelve un ID numérico: un error o un "null" no pueden coincidir y dar el repo por bueno.
+gh_repo_id() { local id; id="$(gh api "repos/$1" --jq .id 2>/dev/null)" && [[ "$id" =~ ^[0-9]+$ ]] && echo "$id" || true; }
 # ID de GitHub del repo enlazado a un recurso de Cloud Build (projects/.../connections/C/repositories/R).
 linked_repo_id() {
   local conn uri
