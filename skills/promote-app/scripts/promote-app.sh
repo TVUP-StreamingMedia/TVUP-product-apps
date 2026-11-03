@@ -575,19 +575,28 @@ cmd_deploy() {
       [[ -n "$mine" && "$mine" == "$(linked_repo_id "$trigger_repo")" ]] \
         || die "El trigger $trigger despliega otro repo (${trigger_repo##*/}), no $REPO. Revisa SERVICIO en el CLAUDE.md o usa --service"
       warn "El repo se renombró: el trigger $trigger escucha ${trigger_repo##*/}; se cambia a $cb_repo"
-      # gcloud manda la máscara de 1.ª generación (github.push.branch) y la API la rechaza con
-      # INVALID_ARGUMENT: se cambia solo el repositorio por la API de Cloud Build.
+      # gcloud manda la máscara de 1.ª generación (github.push.branch) y la API rechaza también un
+      # PATCH parcial con updateMask=repositoryEventConfig. Sí acepta el trigger completo: se lee,
+      # se cambia solo el repositorio y se envía entero, con su aprobación y su cuenta de servicio.
       if [[ "$DRY_RUN" == "1" ]]; then
-        echo "  [dry-run] PATCH triggers/$trigger?updateMask=repositoryEventConfig → $cb_repo"
+        echo "  [dry-run] PATCH triggers/$trigger (trigger completo, repositorio → $cb_repo)"
       else
-        jq -n --arg r "$cb_path" '{repositoryEventConfig: {repository: $r, push: {branch: "^main$"}}}' \
-          | curl -sf -X PATCH -H "Authorization: Bearer $(gcloud auth print-access-token)" \
-              -H "Content-Type: application/json" --data-binary @- \
-              "https://cloudbuild.googleapis.com/v1/projects/$GCP_PROJECT/locations/$CB_REGION/triggers/$trigger?updateMask=repositoryEventConfig" >/dev/null \
+        local api token tid
+        # Por ID, como en la llamada que se probó a mano: con el nombre no está comprobado.
+        tid="$(gcloud builds triggers describe "$trigger" --region="$CB_REGION" "${G[@]}" --format='value(id)')"
+        api="https://cloudbuild.googleapis.com/v1/projects/$GCP_PROJECT/locations/$CB_REGION/triggers/$tid"
+        token="$(gcloud auth print-access-token)"
+        curl -sf -H "Authorization: Bearer $token" "$api" \
+          | jq --arg r "$cb_path" 'del(.createTime) | .repositoryEventConfig.repository = $r' \
+          | curl -sf -X PATCH -H "Authorization: Bearer $token" -H "Content-Type: application/json" \
+              --data-binary @- "$api" >/dev/null \
           || die "No se pudo cambiar el repositorio del trigger $trigger"
         [[ "$(gcloud builds triggers describe "$trigger" --region="$CB_REGION" "${G[@]}" \
               --format='value(repositoryEventConfig.repository)')" == "$cb_path" ]] \
           || die "El trigger $trigger no quedó apuntando a $cb_repo"
+        [[ "$(gcloud builds triggers describe "$trigger" --region="$CB_REGION" "${G[@]}" \
+              --format='value(approvalConfig.approvalRequired)')" == "True" ]] \
+          || die "El trigger $trigger ha perdido la aprobación obligatoria: revísalo en Cloud Build"
       fi
       ok "Trigger $trigger apuntando a $cb_repo"
     fi
