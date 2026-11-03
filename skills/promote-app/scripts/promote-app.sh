@@ -97,6 +97,17 @@ CB_REGION="${CB_REGION:-$REGION}"
 # Sale de la línea SERVICIO del perfil del intake, no del nombre del repo: el repo puede
 # llamarse TVUP-x y el servicio x. Orden: --service, CLAUDE.md local, CLAUDE.md del repo y,
 # si no hay perfil, el nombre del repo.
+# ID de GitHub de un repo. Se conserva al renombrar, así que identifica el repo mejor que el nombre.
+gh_repo_id() { gh api "repos/$1" --jq .id 2>/dev/null || true; }
+# ID de GitHub del repo enlazado a un recurso de Cloud Build (projects/.../connections/C/repositories/R).
+linked_repo_id() {
+  local conn uri
+  conn="$(sed -E 's#.*/connections/([^/]+)/repositories/.*#\1#' <<<"$1")"
+  uri="$(gcloud builds repositories describe "${1##*/}" --connection="$conn" --region="$CB_REGION" "${G[@]}" \
+         --format='value(remoteUri)' 2>/dev/null || true)"
+  uri="${uri#https://github.com/}"; uri="${uri%.git}"
+  if [[ -n "$uri" ]]; then gh_repo_id "$uri"; fi
+}
 servicio_de() { grep -E '^SERVICIO:' "$1" 2>/dev/null | head -1 | awk '{print $2}' || true; }
 SVC="$SVC_ARG"
 [[ -z "$SVC" && -f "$CLAUDE_MD" ]] && SVC="$(servicio_de "$CLAUDE_MD")"
@@ -557,13 +568,21 @@ cmd_deploy() {
     if [[ "$trigger_repo" == "$cb_path" ]]; then
       ok "El trigger $trigger ya existe"
     else
-      # El repo se renombró o se movió: el trigger seguía escuchando el antiguo y no desplegaba.
-      warn "El trigger $trigger escucha ${trigger_repo##*/}; se cambia a $cb_repo"
+      # Solo si es el mismo repo renombrado (mismo ID de GitHub). SERVICIO sale del CLAUDE.md, que
+      # puede editar quien escribe en el repo: sin esta comprobación, se robaría el trigger de otra app.
+      local mine; mine="$(gh_repo_id "$REPO")"
+      [[ -n "$mine" && "$mine" == "$(linked_repo_id "$trigger_repo")" ]] \
+        || die "El trigger $trigger despliega otro repo (${trigger_repo##*/}), no $REPO. Revisa SERVICIO en el CLAUDE.md o usa --service"
+      warn "El repo se renombró: el trigger $trigger escucha ${trigger_repo##*/}; se cambia a $cb_repo"
       run gcloud builds triggers update github "$trigger" --region="$CB_REGION" --repository="$cb_path" \
         --branch-pattern='^main$' "${G[@]}"
       ok "Trigger $trigger apuntando a $cb_repo"
     fi
   else
+    # Un servicio que ya existe sin trigger de este proceso es de otra app (o de un despliegue antiguo).
+    if gcloud run services describe "$SVC" --region="$REGION" "${G[@]}" >/dev/null 2>&1; then
+      die "Ya existe el servicio $SVC y ningún trigger de este proceso lo despliega. Revisa SERVICIO o, si es una migración, coordínala con Ingeniería"
+    fi
     local args=(builds triggers create github --name="$trigger" --region="$CB_REGION" --repository="$cb_path"
                 --branch-pattern='^main$' --build-config=cloudbuild.yaml --require-approval "${G[@]}")
     [[ -n "$CB_SERVICE_ACCOUNT" ]] && args+=(--service-account="$CB_SERVICE_ACCOUNT")

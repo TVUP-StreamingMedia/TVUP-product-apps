@@ -86,6 +86,28 @@ G=(--project "$GCP_PROJECT")
 GOVERNANCE_RE='^(CLAUDE\.md|AGENTS\.md|cloudbuild\.yaml|\.github/|firebase\.json)'
 
 # ---------------------------------------------------------------- datos comunes
+# ID de GitHub de un repo. Se conserva al renombrar, así que identifica el repo mejor que el nombre.
+gh_repo_id() { gh api "repos/$1" --jq .id 2>/dev/null || true; }
+# ID de GitHub del repo enlazado a un recurso de Cloud Build (projects/.../connections/C/repositories/R).
+linked_repo_id() {
+  local conn uri
+  conn="$(sed -E 's#.*/connections/([^/]+)/repositories/.*#\1#' <<<"$1")"
+  uri="$(gcloud builds repositories describe "${1##*/}" --connection="$conn" --region="$CB_REGION" "${G[@]}" \
+         --format='value(remoteUri)' 2>/dev/null || true)"
+  uri="${uri#https://github.com/}"; uri="${uri%.git}"
+  if [[ -n "$uri" ]]; then gh_repo_id "$uri"; fi
+}
+# SERVICIO lo puede editar cualquiera con escritura en el repo: solo se acepta si el trigger de ese
+# servicio despliega este mismo repo. Si no, se actuaría sobre la producción de otra app.
+check_binding() {
+  local path mine theirs
+  path="$(gcloud builds triggers describe "$TRIGGER" --region="$CB_REGION" "${G[@]}" \
+          --format='value(repositoryEventConfig.repository)' 2>/dev/null || true)"
+  [[ -n "$path" ]] || die "No existe el trigger $TRIGGER. ¿La app está promocionada? (skill promote-app)"
+  mine="$(gh_repo_id "$REPO")"; theirs="$(linked_repo_id "$path")"
+  [[ -n "$mine" && "$mine" == "$theirs" ]] \
+    || die "El trigger $TRIGGER no despliega $REPO. Revisa SERVICIO en su CLAUDE.md o usa --service"
+}
 trigger_id() {
   gcloud builds triggers describe "$TRIGGER" --region="$CB_REGION" "${G[@]}" --format='value(id)' 2>/dev/null \
     || die "No existe el trigger $TRIGGER. ¿La app está promocionada? (skill promote-app)"
@@ -291,6 +313,7 @@ cmd_rollback() {
   warn "Las reglas de Firestore no se revierten solas. El siguiente 'approve' devuelve el tráfico a la última versión"
 }
 
+check_binding
 case "$CMD" in
   status) cmd_status ;; summary) cmd_summary ;; approve) cmd_approve ;;
   reject) cmd_reject ;; rollback) cmd_rollback ;;
