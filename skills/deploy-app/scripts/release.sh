@@ -71,6 +71,8 @@ CB_REGION="${CB_REGION:-$REGION}"
 need gcloud ""; need gh ""; need jq ""; need curl ""; need perl ""
 CHECK_RULES="$SCRIPT_DIR/../../promote-app/scripts/check-rules.pl"
 [[ -f "$CHECK_RULES" ]] || die "No encuentro check-rules.pl de promote-app"
+APP_OVERRIDES="$SCRIPT_DIR/../../promote-app/scripts/app-overrides.sh"
+[[ -f "$APP_OVERRIDES" ]] || die "No encuentro app-overrides.sh de promote-app"
 
 REPO="$ORG/$APP"
 # El servicio sale del perfil del intake (SERVICIO), no del nombre del repo: TVUP-x puede servir x.
@@ -232,7 +234,7 @@ prepare_rules() {
   # Del repo solo se usan las reglas: el firebase.json lo escribe el script, con la base de datos
   # de esta app y nada más (sin hooks predeploy ni bases de datos de otras apps).
   mkdir "$dir/deploy" && cp "$dir/repo/firestore.rules" "$dir/deploy/firestore.rules"
-  jq -n --arg d "$SVC" '{firestore:[{database:$d, rules:"firestore.rules"}]}' > "$dir/deploy/firebase.json"
+  jq -n --arg d "$FIRESTORE_DATABASE" '{firestore:[{database:$d, rules:"firestore.rules"}]}' > "$dir/deploy/firebase.json"
   rm -rf "$dir/repo"
   RULES_DIR="$dir"
   ok "Reglas de Firestore válidas"
@@ -315,6 +317,11 @@ cmd_rollback() {
 }
 
 check_binding
+# Excepciones de la app (proyecto Firebase y base de datos). Después de check_binding: SERVICIO sale
+# del CLAUDE.md del repo y solo se acepta una vez comprobado que el trigger despliega este repo.
+# shellcheck source=../../promote-app/scripts/app-overrides.sh
+source "$APP_OVERRIDES"
+load_app_overrides "$SVC"
 case "$CMD" in
   status) cmd_status ;; summary) cmd_summary ;; approve) cmd_approve ;;
   reject) cmd_reject ;; rollback) cmd_rollback ;;
