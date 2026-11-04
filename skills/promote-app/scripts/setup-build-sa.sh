@@ -9,6 +9,8 @@
 #   cloudbuild.builds.editor      lanzar el build interno de «gcloud run deploy --source»
 #   logging.logWriter             escribir los logs del build
 #   serviceusage.serviceUsageConsumer   usar las APIs del proyecto desde gcloud
+#   storage.bucketViewer          listar los buckets: gcloud comprueba así que run-sources es del
+#                                 proyecto (sin acceso a ficheros ni permiso para crear buckets)
 #   storage (solo el bucket run-sources de la región)   subir el código fuente
 #   artifactregistry.reader (solo cloud-run-source-deploy)   comprobar el repositorio de imágenes
 #   iam.serviceAccountUser (solo sobre la cuenta de ejecución)   desplegar con esa identidad
@@ -79,7 +81,10 @@ else
 fi
 
 step "Roles en el proyecto"
-for role in roles/run.developer roles/cloudbuild.builds.editor roles/logging.logWriter roles/serviceusage.serviceUsageConsumer; do
+# storage.bucketViewer: antes de subir el código, «gcloud run deploy --source» lista los
+# buckets del proyecto para comprobar que run-sources es suyo. Sin él, la comprobación da 403,
+# gcloud intenta crear un bucket con nombre aleatorio y el build falla (storage.buckets.create).
+for role in roles/run.developer roles/cloudbuild.builds.editor roles/logging.logWriter roles/serviceusage.serviceUsageConsumer roles/storage.bucketViewer; do
   run gcloud projects add-iam-policy-binding "$GCP_PROJECT" --member="serviceAccount:$SA" --role="$role" --condition=None
   ok "$role"
 done
