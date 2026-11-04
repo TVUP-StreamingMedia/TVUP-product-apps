@@ -93,6 +93,20 @@ source "$CONFIG_FILE"
 # Cloud Build va en la región de su conexión con GitHub, que puede no ser la de Cloud Run.
 CB_REGION="${CB_REGION:-$REGION}"
 
+# Dominios de correo que pueden entrar, separados por espacios. Una config antigua con
+# DOMINIO_CORPORATIVO (uno solo) sigue valiendo. Se escriben en código TS y en reglas de
+# Firestore, así que solo se aceptan nombres de dominio.
+DOMINIOS_CORPORATIVOS="${DOMINIOS_CORPORATIVOS:-${DOMINIO_CORPORATIVO:-}}"
+read -r -a LISTA_DOMINIOS <<<"$DOMINIOS_CORPORATIVOS"
+[[ ${#LISTA_DOMINIOS[@]} -gt 0 ]] || die "Falta DOMINIOS_CORPORATIVOS en $CONFIG_FILE"
+for d in "${LISTA_DOMINIOS[@]}"; do
+  [[ "$d" =~ ^[a-z0-9-]+(\.[a-z0-9-]+)+$ ]] || die "Dominio corporativo no válido: '$d'"
+done
+# "tvup.media" "thechannelstore.tv" → "tvup.media", "thechannelstore.tv" (array de TS)
+dominios_ts()    { printf '"%s", ' "${LISTA_DOMINIOS[@]}" | sed 's/, $//'; }
+# → tvup[.]media|thechannelstore[.]tv (alternativa de la regex de firestore.rules)
+dominios_regex() { printf '%s|' "${LISTA_DOMINIOS[@]}" | sed 's/[.]/[.]/g; s/|$//'; }
+
 # Nombre del servicio Cloud Run: minúsculas, números y guiones; máximo 49 caracteres.
 # Sale de la línea SERVICIO del perfil del intake, no del nombre del repo: el repo puede
 # llamarse TVUP-x y el servicio x. Orden: --service, CLAUDE.md local, CLAUDE.md del repo y,
@@ -175,9 +189,15 @@ export const firebaseConfig = {
 // Base de datos propia de esta app = nombre del servicio, salvo excepción aprobada.
 export const DATABASE_ID = "$FIRESTORE_DATABASE";
 
-// Login corporativo. Mantener DOMINIO_CORPORATIVO igual que en firestore.rules.
-export const DOMINIO_CORPORATIVO = "$DOMINIO_CORPORATIVO";
+// Login corporativo. Mantener DOMINIOS_CORPORATIVOS igual que en firestore.rules.
+export const DOMINIOS_CORPORATIVOS = [$(dominios_ts)];
 export const MICROSOFT_TENANT_ID = "$MICROSOFT_TENANT_ID";
+
+// Lo usan el navegador (login.ts) y el servidor: sin imports, solo lógica pura.
+export function esEmailCorporativo(email: unknown): email is string {
+  return typeof email === "string"
+    && DOMINIOS_CORPORATIVOS.some((dominio) => email.toLowerCase().endsWith("@" + dominio));
+}
 CFG
   if grep -q CAMBIAR "$f"; then warn "Faltan valores de Firebase en $CONFIG_FILE: firebase-config.ts lleva CAMBIAR"
   else ok "src/lib/firebase-config.ts apunta al proyecto estándar ($FIREBASE_PROJECT), base '$FIRESTORE_DATABASE'"; fi
@@ -333,8 +353,9 @@ cmd_create() {
       cp "$SK/firestore-tvup/assets/firestore.ts" src/lib/firestore.ts
       cp "$SK/firestore-tvup/assets/firestore.rules" firestore.rules
       jq --arg d "$FIRESTORE_DATABASE" '.firestore[0].database = $d' "$SK/firestore-tvup/assets/firebase.json" > firebase.json
-      local dom_re; dom_re="$(printf '%s' "$DOMINIO_CORPORATIVO" | sed 's/\./[.]/g')"
-      sedi "s|tvup\\[\\.\\]media|$dom_re|" firestore.rules
+      # esTvup(): .matches('.*@(dominio|dominio)$') con los dominios de la configuración.
+      DOMINIOS_RE="$(dominios_regex)" perl -pi -e "s/\\@\\([^)]*\\)\\$'/\\@(\$ENV{DOMINIOS_RE})\\$'/" firestore.rules
+      grep -qF "@($(dominios_regex))\$'" firestore.rules || die "No se pudieron fijar los dominios en firestore.rules"
       ok "Firestore: src/lib/firestore.ts, firestore.rules y firebase.json (base '$FIRESTORE_DATABASE')"
     fi
     (pnpm add firebase >/dev/null 2>&1 && ok "Dependencia firebase añadida") || warn "No se pudo añadir firebase con pnpm"
