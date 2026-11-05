@@ -331,7 +331,7 @@ cmd_create() {
     else mv src/main.plain.tsx src/main.tsx; rm -f src/main.login.tsx; fi
     local f
     for f in package.json index.html src/App.tsx; do sedi "s|__SVC__|$SVC|g; s|__APP__|$APP|g" "$f"; done
-    ok "Vite + React + TypeScript, con script start para Cloud Run"
+    ok "Vite + React + TypeScript, con Procfile para Cloud Run"
   fi
 
   if [[ "$login" == "1" || "$db" == "1" ]]; then
@@ -396,6 +396,27 @@ EOF
 }
 
 # ---------------------------------------------------------------- PROMOTE (pasos 7-12)
+# Procfile: Cloud Run arranca con él en lugar de «pnpm start». Con «pnpm start» corren pnpm
+# (que se descarga en cada arranque por packageManager, en un disco que está en memoria),
+# el lanzador del script y la app; con un servidor en TypeScript y tsx, eso supera los
+# 512 MiB y Cloud Run mata el contenedor (503). Aquí arranca un solo proceso de Node.
+write_procfile() {
+  local server="$1" cmd=""
+  if [[ -f Procfile ]]; then ok "Ya hay Procfile: no se toca"; return; fi
+  case "$server" in
+    "") [[ -f node_modules/serve/package.json || "$(jq -r '.dependencies.serve // empty' package.json)" != "" ]] \
+          && cmd="node node_modules/serve/build/main.js -s dist" ;;
+    *.ts) [[ "$(jq -r '.dependencies.tsx // empty' package.json)" != "" ]] && cmd="node --import tsx $server" ;;
+    *.js) cmd="node $server" ;;
+  esac
+  if [[ -z "$cmd" ]]; then
+    warn "No sé arrancar la app sin pnpm: añade un Procfile (ver references/errores.md, «Memory limit»)"
+    return
+  fi
+  printf 'web: %s\n' "$cmd" > Procfile
+  ok "Procfile: $cmd"
+}
+
 cmd_promote() {
   [[ -f "$ZIP" ]]       || die "Falta --zip o no existe: $ZIP"
   [[ -f "$CLAUDE_MD" ]] || die "Falta --claude-md o no existe: $CLAUDE_MD"
@@ -495,6 +516,7 @@ cmd_promote() {
     if [[ -n "$server" ]] && ! grep -q 'process.env.PORT' "$server"; then
       warn "$server no lee process.env.PORT: Cloud Run no podrá arrancarlo"
     fi
+    write_procfile "$server"
   else
     warn "No hay package.json: revisa cómo se construye la app"
   fi
