@@ -206,7 +206,15 @@ CFG
 # Rellena cloudbuild.yaml y README.md de la plantilla con los valores de la app.
 fill_governance() {
   local tier="$1"
-  [[ -f cloudbuild.yaml ]] && sedi "s|CAMBIAR-nombre-servicio|$SVC|; s|CAMBIAR-region|$REGION|" cloudbuild.yaml
+  if [[ -f cloudbuild.yaml ]]; then
+    # Las cuentas de ejecución y de build interno salen de setup-build-sa.sh. Si la plantilla las
+    # pide y faltan en la configuración, se para: con la de Compute la app correría como Editor.
+    if grep -q 'CAMBIAR-cuenta-' cloudbuild.yaml; then
+      [[ -n "${RUNTIME_SA:-}" && -n "${SOURCE_BUILD_SA:-}" ]] \
+        || die "Faltan RUNTIME_SA y SOURCE_BUILD_SA en $CONFIG_FILE (los indica setup-build-sa.sh)"
+    fi
+    sedi "s|CAMBIAR-nombre-servicio|$SVC|; s|CAMBIAR-region|$REGION|; s|CAMBIAR-cuenta-ejecucion|${RUNTIME_SA:-}|; s|CAMBIAR-cuenta-build|${SOURCE_BUILD_SA:-}|" cloudbuild.yaml
+  fi
   [[ -f README.md ]] && sedi "s|^# \[Nombre de la app\]|# $APP|; s|\[N0 \| N1 \| N2\]|$tier|; s|\[nombre-del-servicio\]|$SVC|; s|\[europe-west1\]|$REGION|; s|\[subdominio\]\.apps\.tvup\.cloud|$FQDN|" README.md
   return 0
 }
