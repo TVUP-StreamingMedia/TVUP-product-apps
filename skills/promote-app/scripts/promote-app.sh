@@ -27,6 +27,20 @@ run()     { if [[ "${DRY_RUN:-0}" == "1" ]]; then echo "  [dry-run] $*"; else "$
 need()    { command -v "$1" >/dev/null 2>&1 || die "Falta '$1'. $2"; }
 sedi()    { if sed --version >/dev/null 2>&1; then sed -i "$@"; else sed -i '' "$@"; fi; }
 
+# Node activo con la versión mayor que fija el esqueleto (engines.node, p. ej. "24.x").
+# Con otro Node, pnpm 11 ni arranca (pide >= 22.13) y la app no se probaría con el Node de Cloud Run.
+need_node() {
+  need node "Instala Node con nvm: nvm install"
+  local want have
+  want="$(node -p "require('$SCRIPT_DIR/../esqueleto/package.json').engines.node" | grep -oE '^[0-9]+')"
+  have="$(node -p 'process.versions.node.split(".")[0]')"
+  [[ "$have" == "$want" ]] || die "Hace falta Node $want y está activo Node $have: nvm use $want (o nvm alias default $want para que sea el de siempre)"
+  pnpm -v >/dev/null 2>&1 || die "pnpm no arranca con Node $have: $(pnpm -v 2>&1 | tail -1)"
+}
+
+# pnpm sin ruido; si falla, enseña el final de su salida en lugar de ocultarla.
+pnpm_q() { local out; out="$(pnpm "$@" 2>&1)" && return 0; echo "$out" | tail -15 >&2; return 1; }
+
 usage() {
   cat <<'EOF'
 Uso:
@@ -285,7 +299,7 @@ preflight_github() {
 # ---------------------------------------------------------------- CREAR (paso 0)
 cmd_create() {
   [[ -f "$CLAUDE_MD" ]] || die "Falta --claude-md o no existe: $CLAUDE_MD"
-  need pnpm "npm install -g pnpm"
+  need pnpm "npm install -g pnpm"; need_node
   CLAUDE_MD="$(cd "$(dirname "$CLAUDE_MD")" && pwd)/$(basename "$CLAUDE_MD")"
   if [[ -n "$GEMINI_MD" ]]; then
     [[ -f "$GEMINI_MD" ]] || die "No existe $GEMINI_MD"
@@ -366,10 +380,10 @@ cmd_create() {
       grep -qF "@($(dominios_regex))\$'" firestore.rules || die "No se pudieron fijar los dominios en firestore.rules"
       ok "Firestore: src/lib/firestore.ts, firestore.rules y firebase.json (base '$FIRESTORE_DATABASE')"
     fi
-    (pnpm add firebase >/dev/null 2>&1 && ok "Dependencia firebase añadida") || warn "No se pudo añadir firebase con pnpm"
+    (pnpm_q add firebase && ok "Dependencia firebase añadida") || warn "No se pudo añadir firebase con pnpm"
   fi
   if [[ ! -f pnpm-lock.yaml && -f package.json ]]; then
-    pnpm install --lockfile-only >/dev/null 2>&1 && ok "pnpm-lock.yaml generado" || warn "No se pudo generar pnpm-lock.yaml"
+    pnpm_q install --lockfile-only && ok "pnpm-lock.yaml generado" || warn "No se pudo generar pnpm-lock.yaml"
   fi
 
   step "Contexto de la app (docs/contexto/)"
@@ -431,7 +445,7 @@ cmd_promote() {
   # Rutas absolutas: más adelante se cambia de directorio al repo clonado.
   ZIP="$(cd "$(dirname "$ZIP")" && pwd)/$(basename "$ZIP")"
   CLAUDE_MD="$(cd "$(dirname "$CLAUDE_MD")" && pwd)/$(basename "$CLAUDE_MD")"
-  need unzip ""; need rsync ""; need pnpm "npm install -g pnpm"
+  need unzip ""; need rsync ""; need pnpm "npm install -g pnpm"; need_node
 
   local tier; tier="$(tier_from "$CLAUDE_MD")"
   [[ -n "$tier" ]] || die "El CLAUDE.md no tiene el perfil del intake relleno (TIER DE INTAKE)"
