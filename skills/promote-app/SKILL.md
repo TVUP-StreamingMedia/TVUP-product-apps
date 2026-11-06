@@ -23,8 +23,8 @@ Comprueba, sin preguntar lo que puedas averiguar tú:
    `FIREBASE_PROJECT` y el resto de `CAMBIAR` rellenos. Si faltan, pídeselos al
    usuario y escríbelos. En proyectos nuevos, `CB_SERVICE_ACCOUNT` es obligatorio,
    y `CB_REGION` debe ser la región de la conexión de Cloud Build con GitHub.
-   `CB_SERVICE_ACCOUNT` debe ser la cuenta de mínimo privilegio que crea
-   `scripts/setup-build-sa.sh`, nunca la de Compute por defecto (tiene Editor).
+   `CB_SERVICE_ACCOUNT`, `RUNTIME_SA` y `SOURCE_BUILD_SA` son las cuentas de mínimo
+   privilegio que crea `scripts/setup-build-sa.sh`, nunca la de Compute por defecto (tiene Editor).
    El script va en seco por defecto: enséñale al usuario lo que hará y pásale
    `--apply` solo con su confirmación en el chat.
 2. `ANTHROPIC_API_KEY` es **opcional**. El script no llama a Claude: solo la
