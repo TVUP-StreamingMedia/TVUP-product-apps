@@ -908,7 +908,7 @@ cmd_secret() {
     return 0
   fi
   local dir; dir="$(mktemp -d)"
-  gh repo clone "$REPO" "$dir" -- -q || die "No se pudo clonar $REPO"
+  git clone -q "https://github.com/$REPO.git" "$dir" || die "No se pudo clonar $REPO"
   (
     cd "$dir"
     grep -qE '^  _SECRETS: ' cloudbuild.yaml \
