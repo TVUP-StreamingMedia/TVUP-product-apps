@@ -827,8 +827,10 @@ EOF
 # Da a la app una clave de servidor (p. ej. GEMINI_API_KEY) sin que pase por git ni por el chat.
 #   - La app corre con una cuenta propia, <servicio>-run, sin roles en el proyecto: si leyera el
 #     secreto con la compartida (tvup-apps-runtime), cualquier otra app podría leerlo también.
-#   - El secreto vive en Secret Manager (<servicio>-<variable>, réplica solo en $REGION) y solo
-#     esa cuenta puede leerlo.
+#   - El secreto vive en Secret Manager (<servicio>_<VARIABLE>, réplica solo en $REGION) y solo
+#     esa cuenta puede leerlo. El "_" no puede aparecer en el servicio ni el "-" en la variable,
+#     así que dos apps nunca dan el mismo nombre (con "-", dev-arena + GEMINI_API_KEY y
+#     dev-arena-gemini + API_KEY coincidirían).
 #   - El valor se lee de la terminal sin eco, o de stdin; nunca de un argumento (quedaría en el
 #     historial y en la lista de procesos).
 #   - cloudbuild.yaml cambia por PR: _RUNTIME_SA pasa a la cuenta propia y _SECRETS monta la
@@ -847,7 +849,7 @@ reintentar() {
 }
 
 cmd_secret() {
-  need gcloud ""; need gh ""; need git ""
+  need gcloud ""; need gh ""; need git ""; need jq ""
   [[ "$SECRET_NAME" =~ ^[A-Z][A-Z0-9_]*$ ]] || die "--name debe ser una variable en mayúsculas, p. ej. GEMINI_API_KEY"
   [[ "$SECRET_NAME" != VITE_* ]] || die "Las variables VITE_* acaban en el navegador: un secreto nunca puede llamarse así"
   # ID de cuenta: 6 a 30 caracteres. Truncar podría hacer que dos apps compartieran cuenta.
@@ -855,7 +857,7 @@ cmd_secret() {
   local G=(--project "$GCP_PROJECT")
   local sa_id="$SVC-run"
   local sa="$sa_id@$GCP_PROJECT.iam.gserviceaccount.com"
-  local secret; secret="$SVC-$(tr 'A-Z_' 'a-z-' <<<"$SECRET_NAME")"
+  local secret="${SVC}_${SECRET_NAME}"
   local build_sa="${CB_SERVICE_ACCOUNT##*/}"
   [[ -n "$build_sa" ]] || die "Falta CB_SERVICE_ACCOUNT en $CONFIG_FILE (la indica setup-build-sa.sh)"
 
@@ -884,6 +886,13 @@ cmd_secret() {
 
   step "Secreto $secret (réplica en $REGION)"
   if gcloud secrets describe "$secret" "${G[@]}" >/dev/null 2>&1; then
+    # Solo se rota un secreto de esta app, y nadie más que su cuenta puede leerlo.
+    local etiqueta lectores
+    etiqueta="$(gcloud secrets describe "$secret" --format='value(labels.app)' "${G[@]}")"
+    [[ "$etiqueta" == "$SVC" ]] || die "El secreto $secret existe pero es de '${etiqueta:-sin etiqueta}', no de $SVC: no se toca"
+    lectores="$(gcloud secrets get-iam-policy "$secret" --format=json "${G[@]}" \
+      | jq -r --arg m "serviceAccount:$sa" '[.bindings[]? | .members[]] | map(select(. != $m)) | join(" ")')"
+    [[ -z "$lectores" ]] || die "El secreto $secret tiene otros miembros en su política ($lectores): revísalo a mano"
     ok "Ya existe: se añade una versión nueva"
   else
     run gcloud secrets create "$secret" --replication-policy=user-managed --locations="$REGION" \
@@ -915,6 +924,12 @@ cmd_secret() {
       || die "El cloudbuild.yaml de $REPO no tiene _SECRETS: actualízalo antes a la plantilla actual (por PR)"
     local cur nuevos
     cur="$(sed -nE 's/^  _SECRETS: "(.*)"$/\1/p' cloudbuild.yaml)"
+    # Cada entrada, VARIABLE=<servicio>_VARIABLE:versión de esta app; nada más llega al sed.
+    local e
+    for e in $(tr ',' ' ' <<<"$cur"); do
+      [[ "$e" =~ ^[A-Z][A-Z0-9_]*=${SVC}_[A-Z][A-Z0-9_]*:(latest|[0-9]+)$ ]] \
+        || die "Entrada de _SECRETS no válida o de otra app en $REPO: '$e'"
+    done
     nuevos="$( { tr ',' '\n' <<<"$cur" | grep -v -e '^$' -e "^$SECRET_NAME=" || true; echo "$entry"; } | paste -sd, - )"
     sedi "s|^  _RUNTIME_SA: .*|  _RUNTIME_SA: \"$sa\"|; s|^  _SECRETS: .*|  _SECRETS: \"$nuevos\"|" cloudbuild.yaml
     if git diff --quiet; then

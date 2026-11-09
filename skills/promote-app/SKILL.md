@@ -140,7 +140,7 @@ El script:
 
 - crea la cuenta de ejecución propia de la app, `<servicio>-run`, sin roles en el proyecto. Con
   la compartida, cualquier otra app podría leer el secreto;
-- guarda el valor en Secret Manager (`<servicio>-<variable>`, réplica solo en la región) y solo
+- guarda el valor en Secret Manager (`<servicio>_<VARIABLE>`, réplica solo en la región) y solo
   esa cuenta puede leerlo;
 - abre un PR en la app que cambia `_RUNTIME_SA` y añade la variable a `_SECRETS` en
   `cloudbuild.yaml`. Tras el merge, el siguiente despliegue la monta: la app la lee de
