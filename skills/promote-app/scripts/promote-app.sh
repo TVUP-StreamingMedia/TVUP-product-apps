@@ -57,7 +57,7 @@ Opciones:
   --gemini-md <ruta>    GEMINI.md generado por el intake, si se usará AI Studio (create)
   --subdomain <nombre>  Subdominio bajo apps.tvup.cloud (por defecto, el nombre del servicio)
   --firebase            Añade los dominios a Authorized domains de Firebase (deploy)
-  --firestore           Crea la base de datos de la app y despliega sus reglas (deploy)
+  --firestore           Crea la base de datos de la app y despliega sus reglas, índices y TTL (deploy)
   --approve             Aprueba el build sin preguntar (para uso desde Claude Code)
   --login-ok            Confirma que la app N1/N2 tiene implementado el login de su CLAUDE.md (deploy)
   --name <VARIABLE>     Variable de entorno del secreto, p. ej. GEMINI_API_KEY      (secret)
@@ -155,6 +155,8 @@ fi
 # Excepciones aprobadas para esta app (apps/<servicio>.env): proyecto Firebase y base de datos.
 # shellcheck source=app-overrides.sh
 source "$SCRIPT_DIR/app-overrides.sh"
+# shellcheck source=firestore-deploy.sh
+source "$SCRIPT_DIR/firestore-deploy.sh"
 load_app_overrides "$SVC"
 SUB="${SUB:-$SVC}"
 FQDN="$SUB.$APPS_DOMAIN"
@@ -725,7 +727,7 @@ cmd_deploy() {
   # Firestore: una base de datos con nombre por app dentro del proyecto Firebase estándar.
   # Cada base tiene sus propias reglas, así que las apps no se pisan entre sí.
   if [[ "$FIRESTORE" == "1" ]]; then
-    step "Firestore · base de datos '$FIRESTORE_DATABASE' ($FIREBASE_PROJECT) y sus reglas"
+    step "Firestore · base de datos '$FIRESTORE_DATABASE' ($FIREBASE_PROJECT): reglas, índices y TTL"
     need firebase "npm install -g firebase-tools"
     [[ "$FIREBASE_PROJECT" != "CAMBIAR" ]] || die "Configura FIREBASE_PROJECT en $CONFIG_FILE"
     if ! gcloud firestore databases describe --database="$FIRESTORE_DATABASE" --project "$FIREBASE_PROJECT" >/dev/null 2>&1; then
@@ -744,14 +746,12 @@ cmd_deploy() {
       || die "El repo debe tener firestore.rules (skill firestore-tvup)"
     perl "$SCRIPT_DIR/check-rules.pl" "$fsdir/repo/firestore.rules" \
       || die "firestore.rules deja datos accesibles sin login: no se despliega"
-    # Del repo solo se usan las reglas: el firebase.json lo escribe el script, con la base de datos
-    # de esta app y nada más (sin hooks predeploy ni bases de datos de otras apps).
-    mkdir "$fsdir/deploy" && cp "$fsdir/repo/firestore.rules" "$fsdir/deploy/firestore.rules"
-    jq -n --arg d "$FIRESTORE_DATABASE" '{firestore:[{database:$d, rules:"firestore.rules"}]}' > "$fsdir/deploy/firebase.json"
+    prepare_firestore_deploy "$fsdir/repo" "$fsdir/deploy" "$FIRESTORE_DATABASE"
     (cd "$fsdir/deploy" && firebase deploy --only firestore --project "$FIREBASE_PROJECT" --non-interactive >/dev/null) \
-      || die "No se pudieron desplegar las reglas de Firestore"
+      || die "No se pudieron desplegar las reglas y los índices de Firestore"
     rm -rf "$fsdir"
-    ok "Reglas de Firestore desplegadas"
+    ok "Reglas e índices de Firestore desplegados (los índices nuevos tardan unos minutos en construirse)"
+    verify_firestore_ttl "$FIREBASE_PROJECT" "$FIRESTORE_DATABASE"
   fi
 
   # Acceso público: solo N0 o con login confirmado. El binding persiste entre despliegues.

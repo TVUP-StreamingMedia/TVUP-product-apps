@@ -117,6 +117,15 @@ scripts/promote-app.sh deploy --app <app> [--firebase] [--firestore] [--approve]
 
 Ejecútalo primero con `--dry-run` la primera vez que se use en un equipo.
 
+`--firestore` despliega `firestore.rules` y, si el repo lo tiene, `firestore.indexes.json`: los
+índices compuestos y los `fieldOverrides`. Un override con `"ttl": true` activa la política TTL
+de ese campo (la retención de datos de la app) y el script comprueba después que ha quedado
+creada o activa; si no, se para. Del fichero de índices solo admite `indexes` y `fieldOverrides`.
+Se despliega sin `--force`: nunca borra índices ni desactiva un TTL que falte en el fichero; solo
+`"ttl": false` lo desactiva, y el script lo avisa. Díselo al usuario si aparece ese aviso.
+Si el `CLAUDE.md` o `docs/contexto/` de la app hablan de retención o TTL y el fichero no tiene el
+override, no despliegues: la retención no se cumpliría. El arreglo va en un PR de la app.
+
 Al terminar, da al usuario la URL definitiva y recuérdale el último paso
 manual: abrirla en incógnito y comprobar que pide login antes de mostrar nada.
 
@@ -184,7 +193,7 @@ Algunas apps anteriores al proceso tienen sus datos en otro proyecto Firebase o 
   se leen esas dos claves con su valor validado, y cualquier otra cosa para el script.
 - Con un proyecto propio, el script **no reescribe** `src/lib/firebase-config.ts` (apiKey y appId
   del estándar no valen) y **no crea** la base de datos: si no existe, se para.
-- `--firebase` autoriza los dominios y `--firestore` despliega las reglas en ese proyecto y esa base.
+- `--firebase` autoriza los dominios y `--firestore` despliega las reglas, los índices y el TTL en ese proyecto y esa base.
   Tu cuenta necesita permisos en ese proyecto.
 - `deploy-app` usa la misma excepción, cargada después de comprobar que el trigger despliega el repo.
 
