@@ -125,6 +125,31 @@ merge en `main`, van con la skill `deploy-app`.
 El certificado puede tardar en emitirse; un error de certificado justo después
 no es un fallo.
 
+## Secretos de la app (claves de servidor)
+
+Si el `CLAUDE.md` de la app usa IA o una API con clave, la clave va en el servidor y la pone
+Ingeniería con el script. **Nunca la pidas en el chat ni la escribas en un fichero**: el usuario
+lanza el comando en su terminal (con `!` en el prompt) y el script la lee sin eco.
+
+```bash
+scripts/promote-app.sh secret --app <app> --name GEMINI_API_KEY --dry-run   # enséñale qué hará
+! scripts/promote-app.sh secret --app <app> --name GEMINI_API_KEY            # lo ejecuta el usuario
+```
+
+El script:
+
+- crea la cuenta de ejecución propia de la app, `<servicio>-run`, sin roles en el proyecto. Con
+  la compartida, cualquier otra app podría leer el secreto;
+- guarda el valor en Secret Manager (`<servicio>-<variable>`, réplica solo en la región) y solo
+  esa cuenta puede leerlo;
+- abre un PR en la app que cambia `_RUNTIME_SA` y añade la variable a `_SECRETS` en
+  `cloudbuild.yaml`. Tras el merge, el siguiente despliegue la monta: la app la lee de
+  `process.env.<VARIABLE>`.
+
+Para rotar la clave, se vuelve a ejecutar con la misma variable: añade una versión nueva, que la
+app usa desde el siguiente despliegue. El `cloudbuild.yaml` de la app tiene que tener `_SECRETS`
+(plantilla actual); si no, el script lo dice y hay que actualizarlo antes por PR.
+
 ## Excepciones por app (Firebase propio)
 
 Algunas apps anteriores al proceso tienen sus datos en otro proyecto Firebase o en la base
@@ -147,5 +172,5 @@ Antes de lanzar `deploy` en una app con excepción, díselo al usuario y enséñ
 - Ejecutar a mano pasos que hace el script (crear triggers, tocar DNS,
   cambiar Authorized domains). Si el script falla, se arregla el script o la
   configuración; no se rodea.
-- Mostrar o guardar secretos.
+- Mostrar o guardar secretos, o pedir que te peguen uno en el chat.
 - Hacer push directo a `main` de una app ya promocionada: todo va por PR.

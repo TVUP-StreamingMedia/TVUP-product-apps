@@ -4,6 +4,8 @@ Todos han ocurrido al montar el proceso. Busca el mensaje antes de proponer una 
 
 | Mensaje o síntoma | Causa | Solución |
 | --- | --- | --- |
+| `El cloudbuild.yaml de ... no tiene _SECRETS` | La app se creó con una plantilla anterior a los secretos | Actualizar su `cloudbuild.yaml` a la plantilla actual por PR (sustitución `_SECRETS` y paso `deploy-prod` con bash) y volver a lanzar `secret` |
+| Despliegue con `Permission denied on secret` o `secretAccessor` | La cuenta de ejecución del `cloudbuild.yaml` no es la que tiene acceso al secreto (p. ej. sigue en `tvup-apps-runtime`) | Hacer merge del PR que abrió `promote-app.sh secret`: cambia `_RUNTIME_SA` a `<servicio>-run` |
 | `Hace falta Node 24 y está activo Node 20`, o antes «No se pudo añadir firebase con pnpm» sin más detalle | El Node por defecto de la terminal es anterior al que fija el esqueleto; pnpm 11 pide Node >= 22.13 y ni arranca | `nvm use 24`, o `nvm alias default 24` para que sea el de siempre. Si el repo ya se creó sin `firebase` ni `pnpm-lock.yaml`, añádelos en una rama y PR con Node 24 (`pnpm add firebase`) |
 | `no es miembro activo de TVUP-StreamingMedia` | `gh` tiene sesión con la cuenta personal | `gh auth switch` o `gh auth login` con la corporativa |
 | `Repository not found` al clonar por SSH | La clave SSH está dada de alta en la cuenta personal | El script ya usa HTTPS con `gh`; si clonas a mano, usa `gh repo clone` |
