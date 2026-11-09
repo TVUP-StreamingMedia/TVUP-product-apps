@@ -135,7 +135,15 @@ digas que un PR está listo para merge hasta haber hecho esto:**
    `gh api repos/<org/repo>/pulls/<n>/comments` y `gh api repos/<org/repo>/issues/<n>/comments`.
 3. Por cada hallazgo, corrígelo en la misma rama o, si no aplica, explica el motivo en un
    comentario del PR. Ninguno se queda sin respuesta, tampoco los de severidad Baja.
-4. Resume al usuario qué encontró la revisión y qué has hecho con cada hallazgo.
+4. Cada push vuelve a lanzar la revisión, y cada pasada puede encontrar cosas nuevas, cada vez
+   menores: no es determinista. Repite mientras salgan hallazgos Crítica, Alta o Media. Cuando
+   una pasada solo deje Bajas ya respondidas, para y díselo al usuario.
+5. Si la revisión falla por algo ajeno al código (un 504 al instalar la acción, por ejemplo),
+   relánzala con `gh run rerun <id>`: un check en rojo no es un hallazgo.
+6. Resume al usuario qué encontró la revisión y qué has hecho con cada hallazgo.
+
+Si el usuario hace el merge antes de que termines, el arreglo pendiente va en un PR nuevo desde
+`main`: la rama del PR fusionado ya no existe y un push a ella no llega a ninguna parte.
 
 Si el repo no tiene revisión (no aparece ningún check), díselo al usuario: ese PR solo lo revisa él.
 
