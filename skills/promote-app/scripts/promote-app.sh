@@ -47,6 +47,7 @@ Uso:
   promote-app.sh create  --claude-md <CLAUDE.md> [--gemini-md <GEMINI.md>] [--app <repo>]
   promote-app.sh promote --app <repo> --zip <codigo.zip> --claude-md <CLAUDE.md> [opciones]
   promote-app.sh deploy  --app <repo> [opciones]
+  promote-app.sh secret  --app <repo> --name <VARIABLE>   (el valor se pide sin eco)
 
 Opciones:
   --app <nombre>        Nombre del repo en la organización (p. ej. TVUP-jira-hub)
@@ -59,6 +60,7 @@ Opciones:
   --firestore           Crea la base de datos de la app y despliega sus reglas (deploy)
   --approve             Aprueba el build sin preguntar (para uso desde Claude Code)
   --login-ok            Confirma que la app N1/N2 tiene implementado el login de su CLAUDE.md (deploy)
+  --name <VARIABLE>     Variable de entorno del secreto, p. ej. GEMINI_API_KEY      (secret)
   --sin-dns             No crea el CNAME en Route 53; muestra el registro para crearlo a mano (deploy)
   --reuse-repo          Continúa aunque el repo ya exista                (promote)
   --dry-run             Muestra los comandos sin ejecutarlos
@@ -73,7 +75,7 @@ EOF
 
 # ---------------------------------------------------------------- argumentos
 CMD="${1:-}"; [[ $# -gt 0 ]] && shift
-APP=""; SVC_ARG=""; ZIP=""; CLAUDE_MD=""; GEMINI_MD=""; SUB=""; FIREBASE=0; FIRESTORE=0; REUSE=0; APPROVE=0; LOGIN_OK=0; SIN_DNS=0; DRY_RUN="${DRY_RUN:-0}"
+APP=""; SVC_ARG=""; ZIP=""; CLAUDE_MD=""; GEMINI_MD=""; SUB=""; FIREBASE=0; FIRESTORE=0; REUSE=0; APPROVE=0; LOGIN_OK=0; SIN_DNS=0; SECRET_NAME=""; DRY_RUN="${DRY_RUN:-0}"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --app)        APP="$2"; shift 2 ;;
@@ -87,6 +89,7 @@ while [[ $# -gt 0 ]]; do
     --approve)    APPROVE=1; shift ;;
     --login-ok)   LOGIN_OK=1; shift ;;
     --sin-dns)    SIN_DNS=1; shift ;;
+    --name)       SECRET_NAME="$2"; shift 2 ;;
     --reuse-repo) REUSE=1; shift ;;
     --dry-run)    DRY_RUN=1; shift ;;
     -h|--help)    usage; exit 0 ;;
@@ -94,7 +97,8 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 [[ "$CMD" == "crear" ]] && CMD="create"   # nombre antiguo, se mantiene como alias
-[[ "$CMD" =~ ^(create|promote|deploy)$ ]] || { usage; exit 1; }
+[[ "$CMD" == "secreto" ]] && CMD="secret"
+[[ "$CMD" =~ ^(create|promote|deploy|secret)$ ]] || { usage; exit 1; }
 # En create, el nombre del repo sale por defecto del perfil del intake (línea SERVICIO).
 if [[ "$CMD" == "create" && -z "$APP" && -f "$CLAUDE_MD" ]]; then
   APP="$(grep -E '^SERVICIO:' "$CLAUDE_MD" | head -1 | awk '{print $2}')"
@@ -819,8 +823,147 @@ ${c_grn}Despliegue terminado.${c_off}
 EOF
 }
 
+# ---------------------------------------------------------------- SECRETO
+# Da a la app una clave de servidor (p. ej. GEMINI_API_KEY) sin que pase por git ni por el chat.
+#   - La app corre con una cuenta propia, <servicio>-run, sin roles en el proyecto: si leyera el
+#     secreto con la compartida (tvup-apps-runtime), cualquier otra app podría leerlo también.
+#   - El secreto vive en Secret Manager (<servicio>_<VARIABLE>, réplica solo en $REGION) y solo
+#     esa cuenta puede leerlo. El "_" no puede aparecer en el servicio ni el "-" en la variable,
+#     así que dos apps nunca dan el mismo nombre (con "-", dev-arena + GEMINI_API_KEY y
+#     dev-arena-gemini + API_KEY coincidirían).
+#   - El valor se lee de la terminal sin eco, o de stdin; nunca de un argumento (quedaría en el
+#     historial y en la lista de procesos).
+#   - cloudbuild.yaml cambia por PR: _RUNTIME_SA pasa a la cuenta propia y _SECRETS monta la
+#     variable con --set-secrets, en una versión fija. Hasta el merge y el siguiente despliegue,
+#     la app no la ve.
+# Volver a ejecutarlo con la misma variable rota la clave: añade una versión nueva y abre el PR
+# que la fija, así cada rotación queda en git y se deshace con un revert.
+
+# Reintenta un comando: una cuenta recién creada tarda unos segundos en poder usarse en IAM.
+reintentar() {
+  local i
+  for i in 1 2 3 4 5; do
+    "$@" && return 0
+    [[ "$DRY_RUN" == "1" ]] && return 0
+    sleep 4
+  done
+  return 1
+}
+
+cmd_secret() {
+  need gcloud ""; need gh ""; need git ""; need jq ""
+  [[ "$SECRET_NAME" =~ ^[A-Z][A-Z0-9_]*$ ]] || die "--name debe ser una variable en mayúsculas, p. ej. GEMINI_API_KEY"
+  [[ "$SECRET_NAME" != VITE_* ]] || die "Las variables VITE_* acaban en el navegador: un secreto nunca puede llamarse así"
+  # Lista blanca, la misma que aplica el despliegue: así no se pisa nada que cambie cómo arranca
+  # el proceso (NODE_OPTIONS, LD_PRELOAD, GOOGLE_APPLICATION_CREDENTIALS…).
+  [[ "$SECRET_NAME" =~ _(KEY|TOKEN|SECRET|PASSWORD)$ ]] \
+    || die "$SECRET_NAME no vale: el nombre debe acabar en _KEY, _TOKEN, _SECRET o _PASSWORD (p. ej. GEMINI_API_KEY)"
+  # ID de cuenta: 6 a 30 caracteres. Truncar podría hacer que dos apps compartieran cuenta.
+  [[ ${#SVC} -le 26 ]] || die "El servicio '$SVC' es demasiado largo para su cuenta propia (máximo 26 caracteres)"
+  local G=(--project "$GCP_PROJECT")
+  local sa_id="$SVC-run"
+  local sa="$sa_id@$GCP_PROJECT.iam.gserviceaccount.com"
+  local secret="${SVC}_${SECRET_NAME}"
+  local build_sa="${CB_SERVICE_ACCOUNT##*/}"
+  [[ -n "$build_sa" ]] || die "Falta CB_SERVICE_ACCOUNT en $CONFIG_FILE (la indica setup-build-sa.sh)"
+
+  # El valor, lo primero: si no llega, no se crea nada.
+  local value=""
+  if [[ "$DRY_RUN" != "1" ]]; then
+    if [[ -t 0 ]]; then read -r -s -p "Valor de $SECRET_NAME (no se muestra): " value; echo
+    else value="$(cat)"; fi
+    [[ -n "$value" ]] || die "Valor vacío: no se ha cambiado nada"
+  fi
+
+  step "Secret Manager"
+  run gcloud services enable secretmanager.googleapis.com "${G[@]}"
+
+  step "Cuenta de ejecución propia: $sa_id"
+  if gcloud iam service-accounts describe "$sa" "${G[@]}" >/dev/null 2>&1; then
+    ok "Ya existe"
+  else
+    run gcloud iam service-accounts create "$sa_id" --display-name="Ejecución de $SVC" \
+      --description="Cuenta de ejecución de la app $SVC, sin roles en el proyecto (promote-app secret)" "${G[@]}"
+  fi
+  # tvup-apps-build despliega la app con esta identidad: necesita actAs sobre ella, y solo sobre ella.
+  reintentar run gcloud iam service-accounts add-iam-policy-binding "$sa" --member="serviceAccount:$build_sa" \
+    --role=roles/iam.serviceAccountUser --format=none "${G[@]}" || die "No se pudo dar actAs a $build_sa sobre $sa_id"
+  ok "$build_sa puede desplegar con ella"
+
+  step "Secreto $secret (réplica en $REGION)"
+  if gcloud secrets describe "$secret" "${G[@]}" >/dev/null 2>&1; then
+    # Solo se rota un secreto de esta app, y nadie más que su cuenta puede leerlo.
+    local etiqueta lectores
+    etiqueta="$(gcloud secrets describe "$secret" --format='value(labels.app)' "${G[@]}")"
+    [[ "$etiqueta" == "$SVC" ]] || die "El secreto $secret existe pero es de '${etiqueta:-sin etiqueta}', no de $SVC: no se toca"
+    lectores="$(gcloud secrets get-iam-policy "$secret" --format=json "${G[@]}" \
+      | jq -r --arg m "serviceAccount:$sa" '[.bindings[]? | .members[]] | map(select(. != $m)) | join(" ")')"
+    [[ -z "$lectores" ]] || die "El secreto $secret tiene otros miembros en su política ($lectores): revísalo a mano"
+    ok "Ya existe: se añade una versión nueva"
+  else
+    run gcloud secrets create "$secret" --replication-policy=user-managed --locations="$REGION" \
+      --labels="app=$SVC" "${G[@]}"
+  fi
+  local version="<versión>"
+  if [[ "$DRY_RUN" == "1" ]]; then
+    echo "  [dry-run] gcloud secrets versions add $secret --data-file=-   (valor leído sin eco)"
+  else
+    version="$(printf '%s' "$value" | gcloud secrets versions add "$secret" --data-file=- \
+      --format='value(name)' "${G[@]}")" || die "No se pudo guardar el valor"
+    version="${version##*/}"
+    [[ "$version" =~ ^[0-9]+$ ]] || die "Secret Manager no devolvió el número de versión"
+    ok "Versión $version guardada"
+  fi
+  value=""
+  reintentar run gcloud secrets add-iam-policy-binding "$secret" --member="serviceAccount:$sa" \
+    --role=roles/secretmanager.secretAccessor --format=none "${G[@]}" || die "No se pudo dar acceso a $sa_id"
+  ok "Solo $sa_id puede leerlo"
+
+  step "cloudbuild.yaml de $REPO (por PR)"
+  local entry="$SECRET_NAME=$secret:$version"
+  if [[ "$DRY_RUN" == "1" ]]; then
+    echo "  [dry-run] PR en $REPO: _RUNTIME_SA → $sa y $entry en _SECRETS"
+    return 0
+  fi
+  local dir; dir="$(mktemp -d)"
+  git clone -q "https://github.com/$REPO.git" "$dir" || die "No se pudo clonar $REPO"
+  (
+    cd "$dir"
+    grep -qE '^  _SECRETS: ' cloudbuild.yaml \
+      || die "El cloudbuild.yaml de $REPO no tiene _SECRETS: actualízalo antes a la plantilla actual (por PR)"
+    local cur nuevos
+    cur="$(sed -nE 's/^  _SECRETS: "(.*)"$/\1/p' cloudbuild.yaml)"
+    # Cada entrada, VARIABLE=<servicio>_VARIABLE:versión de esta app; nada más llega al sed.
+    local e
+    for e in $(tr ',' ' ' <<<"$cur"); do
+      [[ "$e" =~ ^[A-Z][A-Z0-9_]*=${SVC}_[A-Z][A-Z0-9_]*:[0-9]+$ ]] \
+        || die "Entrada de _SECRETS no válida o de otra app en $REPO: '$e'"
+    done
+    nuevos="$( { tr ',' '\n' <<<"$cur" | grep -v -e '^$' -e "^$SECRET_NAME=" || true; echo "$entry"; } | paste -sd, - )"
+    sedi "s|^  _RUNTIME_SA: .*|  _RUNTIME_SA: \"$sa\"|; s|^  _SECRETS: .*|  _SECRETS: \"$nuevos\"|" cloudbuild.yaml
+    git diff --quiet && die "cloudbuild.yaml no ha cambiado: revisa _SECRETS en $REPO"
+    local rama; rama="chore/secreto-$(tr 'A-Z_' 'a-z-' <<<"$SECRET_NAME")-v$version"
+    git checkout -q -b "$rama"
+    git commit -qam "chore: montar $SECRET_NAME (versión $version) desde Secret Manager"
+    git push -q -u origin "$rama"
+    gh pr create --title "chore: montar $SECRET_NAME (versión $version) desde Secret Manager" --body "$(cat <<EOF
+Preparado por \`promote-app.sh secret\`.
+
+- **\`_RUNTIME_SA\`** pasa a \`$sa_id\`, la cuenta propia de la app, sin roles en el proyecto. Con la compartida, cualquier otra app podría leer este secreto.
+- **\`_SECRETS\`** monta \`$SECRET_NAME\` desde el secreto \`$secret\`, **versión $version** (Secret Manager, réplica en $REGION). Solo \`$sa_id\` puede leerlo.
+
+La versión es fija: este PR es el registro de la rotación, y un revert vuelve a la versión anterior.
+
+El valor no pasa por git. La app lo lee de \`process.env.$SECRET_NAME\` en el servidor, a partir del próximo despliegue tras el merge.
+EOF
+)"
+  ) || die "No se pudo preparar el PR de cloudbuild.yaml"
+  rm -rf "$dir"
+}
+
 case "$CMD" in
   create)  cmd_create ;;
   promote) cmd_promote ;;
   deploy)  cmd_deploy ;;
+  secret)  cmd_secret ;;
 esac

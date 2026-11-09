@@ -125,6 +125,55 @@ merge en `main`, van con la skill `deploy-app`.
 El certificado puede tardar en emitirse; un error de certificado justo después
 no es un fallo.
 
+## Después de abrir cualquier PR
+
+Vale para todos los PR que abras: los de la app, los de la plantilla y los de este repo. **No
+digas que un PR está listo para merge hasta haber hecho esto:**
+
+1. Espera a que termine la revisión: `gh pr checks <n> --repo <org/repo> --watch`.
+2. Lee el resumen y los comentarios en línea de `claude[bot]`:
+   `gh api repos/<org/repo>/pulls/<n>/comments` y `gh api repos/<org/repo>/issues/<n>/comments`.
+3. Por cada hallazgo, corrígelo en la misma rama o, si no aplica, explica el motivo en un
+   comentario del PR. Ninguno se queda sin respuesta, tampoco los de severidad Baja.
+4. Cada push vuelve a lanzar la revisión, y cada pasada puede encontrar cosas nuevas, cada vez
+   menores: no es determinista. Repite mientras salgan hallazgos Crítica, Alta o Media. Cuando
+   una pasada solo deje Bajas ya respondidas, para y díselo al usuario.
+5. Si la revisión falla por algo ajeno al código (un 504 al instalar la acción, por ejemplo),
+   relánzala con `gh run rerun <id>`: un check en rojo no es un hallazgo.
+6. Resume al usuario qué encontró la revisión y qué has hecho con cada hallazgo.
+
+Si el usuario hace el merge antes de que termines, el arreglo pendiente va en un PR nuevo desde
+`main`: la rama del PR fusionado ya no existe y un push a ella no llega a ninguna parte.
+
+Si el repo no tiene revisión (no aparece ningún check), díselo al usuario: ese PR solo lo revisa él.
+
+## Secretos de la app (claves de servidor)
+
+Si el `CLAUDE.md` de la app usa IA o una API con clave, la clave va en el servidor y la pone
+Ingeniería con el script. **Nunca la pidas en el chat ni la escribas en un fichero**: el usuario
+lanza el comando en su terminal (con `!` en el prompt) y el script la lee sin eco.
+
+```bash
+scripts/promote-app.sh secret --app <app> --name GEMINI_API_KEY --dry-run   # enséñale qué hará
+! scripts/promote-app.sh secret --app <app> --name GEMINI_API_KEY            # lo ejecuta el usuario
+```
+
+El script:
+
+- crea la cuenta de ejecución propia de la app, `<servicio>-run`, sin roles en el proyecto. Con
+  la compartida, cualquier otra app podría leer el secreto;
+- guarda el valor en Secret Manager (`<servicio>_<VARIABLE>`, réplica solo en la región) y solo
+  esa cuenta puede leerlo;
+- abre un PR en la app que cambia `_RUNTIME_SA` y añade la variable a `_SECRETS` en
+  `cloudbuild.yaml`, con la versión fija. Tras el merge, el siguiente despliegue la monta: la
+  app la lee de `process.env.<VARIABLE>`.
+
+Para rotar la clave, se vuelve a ejecutar con la misma variable: añade una versión nueva y abre
+el PR que la fija. Cada rotación queda en git, y un revert del PR vuelve a la anterior. Para
+retirar una clave, se quita su entrada de `_SECRETS` por PR: sin entradas, el despliegue pasa
+`--clear-secrets`. El `cloudbuild.yaml` de la app tiene que tener `_SECRETS`
+(plantilla actual); si no, el script lo dice y hay que actualizarlo antes por PR.
+
 ## Excepciones por app (Firebase propio)
 
 Algunas apps anteriores al proceso tienen sus datos en otro proyecto Firebase o en la base
@@ -147,5 +196,5 @@ Antes de lanzar `deploy` en una app con excepción, díselo al usuario y enséñ
 - Ejecutar a mano pasos que hace el script (crear triggers, tocar DNS,
   cambiar Authorized domains). Si el script falla, se arregla el script o la
   configuración; no se rodea.
-- Mostrar o guardar secretos.
+- Mostrar o guardar secretos, o pedir que te peguen uno en el chat.
 - Hacer push directo a `main` de una app ya promocionada: todo va por PR.
