@@ -125,6 +125,20 @@ merge en `main`, van con la skill `deploy-app`.
 El certificado puede tardar en emitirse; un error de certificado justo después
 no es un fallo.
 
+## Después de abrir cualquier PR
+
+Vale para todos los PR que abras: los de la app, los de la plantilla y los de este repo. **No
+digas que un PR está listo para merge hasta haber hecho esto:**
+
+1. Espera a que termine la revisión: `gh pr checks <n> --repo <org/repo> --watch`.
+2. Lee el resumen y los comentarios en línea de `claude[bot]`:
+   `gh api repos/<org/repo>/pulls/<n>/comments` y `gh api repos/<org/repo>/issues/<n>/comments`.
+3. Por cada hallazgo, corrígelo en la misma rama o, si no aplica, explica el motivo en un
+   comentario del PR. Ninguno se queda sin respuesta, tampoco los de severidad Baja.
+4. Resume al usuario qué encontró la revisión y qué has hecho con cada hallazgo.
+
+Si el repo no tiene revisión (no aparece ningún check), díselo al usuario: ese PR solo lo revisa él.
+
 ## Secretos de la app (claves de servidor)
 
 Si el `CLAUDE.md` de la app usa IA o una API con clave, la clave va en el servidor y la pone
@@ -143,11 +157,13 @@ El script:
 - guarda el valor en Secret Manager (`<servicio>_<VARIABLE>`, réplica solo en la región) y solo
   esa cuenta puede leerlo;
 - abre un PR en la app que cambia `_RUNTIME_SA` y añade la variable a `_SECRETS` en
-  `cloudbuild.yaml`. Tras el merge, el siguiente despliegue la monta: la app la lee de
-  `process.env.<VARIABLE>`.
+  `cloudbuild.yaml`, con la versión fija. Tras el merge, el siguiente despliegue la monta: la
+  app la lee de `process.env.<VARIABLE>`.
 
-Para rotar la clave, se vuelve a ejecutar con la misma variable: añade una versión nueva, que la
-app usa desde el siguiente despliegue. El `cloudbuild.yaml` de la app tiene que tener `_SECRETS`
+Para rotar la clave, se vuelve a ejecutar con la misma variable: añade una versión nueva y abre
+el PR que la fija. Cada rotación queda en git, y un revert del PR vuelve a la anterior. Para
+retirar una clave, se quita su entrada de `_SECRETS` por PR: sin entradas, el despliegue pasa
+`--clear-secrets`. El `cloudbuild.yaml` de la app tiene que tener `_SECRETS`
 (plantilla actual); si no, el script lo dice y hay que actualizarlo antes por PR.
 
 ## Excepciones por app (Firebase propio)

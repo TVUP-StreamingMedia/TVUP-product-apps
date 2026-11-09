@@ -834,8 +834,10 @@ EOF
 #   - El valor se lee de la terminal sin eco, o de stdin; nunca de un argumento (quedaría en el
 #     historial y en la lista de procesos).
 #   - cloudbuild.yaml cambia por PR: _RUNTIME_SA pasa a la cuenta propia y _SECRETS monta la
-#     variable con --set-secrets. Hasta el merge y el siguiente despliegue, la app no la ve.
-# Volver a ejecutarlo con la misma variable rota la clave: añade una versión nueva.
+#     variable con --set-secrets, en una versión fija. Hasta el merge y el siguiente despliegue,
+#     la app no la ve.
+# Volver a ejecutarlo con la misma variable rota la clave: añade una versión nueva y abre el PR
+# que la fija, así cada rotación queda en git y se deshace con un revert.
 
 # Reintenta un comando: una cuenta recién creada tarda unos segundos en poder usarse en IAM.
 reintentar() {
@@ -898,12 +900,15 @@ cmd_secret() {
     run gcloud secrets create "$secret" --replication-policy=user-managed --locations="$REGION" \
       --labels="app=$SVC" "${G[@]}"
   fi
+  local version="<versión>"
   if [[ "$DRY_RUN" == "1" ]]; then
     echo "  [dry-run] gcloud secrets versions add $secret --data-file=-   (valor leído sin eco)"
   else
-    printf '%s' "$value" | gcloud secrets versions add "$secret" --data-file=- --format=none "${G[@]}" \
-      || die "No se pudo guardar el valor"
-    ok "Versión nueva guardada"
+    version="$(printf '%s' "$value" | gcloud secrets versions add "$secret" --data-file=- \
+      --format='value(name)' "${G[@]}")" || die "No se pudo guardar el valor"
+    version="${version##*/}"
+    [[ "$version" =~ ^[0-9]+$ ]] || die "Secret Manager no devolvió el número de versión"
+    ok "Versión $version guardada"
   fi
   value=""
   reintentar run gcloud secrets add-iam-policy-binding "$secret" --member="serviceAccount:$sa" \
@@ -911,7 +916,7 @@ cmd_secret() {
   ok "Solo $sa_id puede leerlo"
 
   step "cloudbuild.yaml de $REPO (por PR)"
-  local entry="$SECRET_NAME=$secret:latest"
+  local entry="$SECRET_NAME=$secret:$version"
   if [[ "$DRY_RUN" == "1" ]]; then
     echo "  [dry-run] PR en $REPO: _RUNTIME_SA → $sa y $entry en _SECRETS"
     return 0
@@ -927,24 +932,23 @@ cmd_secret() {
     # Cada entrada, VARIABLE=<servicio>_VARIABLE:versión de esta app; nada más llega al sed.
     local e
     for e in $(tr ',' ' ' <<<"$cur"); do
-      [[ "$e" =~ ^[A-Z][A-Z0-9_]*=${SVC}_[A-Z][A-Z0-9_]*:(latest|[0-9]+)$ ]] \
+      [[ "$e" =~ ^[A-Z][A-Z0-9_]*=${SVC}_[A-Z][A-Z0-9_]*:[0-9]+$ ]] \
         || die "Entrada de _SECRETS no válida o de otra app en $REPO: '$e'"
     done
     nuevos="$( { tr ',' '\n' <<<"$cur" | grep -v -e '^$' -e "^$SECRET_NAME=" || true; echo "$entry"; } | paste -sd, - )"
     sedi "s|^  _RUNTIME_SA: .*|  _RUNTIME_SA: \"$sa\"|; s|^  _SECRETS: .*|  _SECRETS: \"$nuevos\"|" cloudbuild.yaml
-    if git diff --quiet; then
-      ok "cloudbuild.yaml ya monta $SECRET_NAME: la versión nueva se usará en el próximo despliegue"
-      exit 0
-    fi
-    local rama; rama="chore/secreto-$(tr 'A-Z_' 'a-z-' <<<"$SECRET_NAME")"
+    git diff --quiet && die "cloudbuild.yaml no ha cambiado: revisa _SECRETS en $REPO"
+    local rama; rama="chore/secreto-$(tr 'A-Z_' 'a-z-' <<<"$SECRET_NAME")-v$version"
     git checkout -q -b "$rama"
-    git commit -qam "chore: montar $SECRET_NAME desde Secret Manager"
+    git commit -qam "chore: montar $SECRET_NAME (versión $version) desde Secret Manager"
     git push -q -u origin "$rama"
-    gh pr create --title "chore: montar $SECRET_NAME desde Secret Manager" --body "$(cat <<EOF
+    gh pr create --title "chore: montar $SECRET_NAME (versión $version) desde Secret Manager" --body "$(cat <<EOF
 Preparado por \`promote-app.sh secret\`.
 
 - **\`_RUNTIME_SA\`** pasa a \`$sa_id\`, la cuenta propia de la app, sin roles en el proyecto. Con la compartida, cualquier otra app podría leer este secreto.
-- **\`_SECRETS\`** monta \`$SECRET_NAME\` desde el secreto \`$secret\` (Secret Manager, réplica en $REGION). Solo \`$sa_id\` puede leerlo.
+- **\`_SECRETS\`** monta \`$SECRET_NAME\` desde el secreto \`$secret\`, **versión $version** (Secret Manager, réplica en $REGION). Solo \`$sa_id\` puede leerlo.
+
+La versión es fija: este PR es el registro de la rotación, y un revert vuelve a la versión anterior.
 
 El valor no pasa por git. La app lo lee de \`process.env.$SECRET_NAME\` en el servidor, a partir del próximo despliegue tras el merge.
 EOF
