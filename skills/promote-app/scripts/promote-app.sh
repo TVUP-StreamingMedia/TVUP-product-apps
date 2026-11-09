@@ -854,6 +854,10 @@ cmd_secret() {
   need gcloud ""; need gh ""; need git ""; need jq ""
   [[ "$SECRET_NAME" =~ ^[A-Z][A-Z0-9_]*$ ]] || die "--name debe ser una variable en mayúsculas, p. ej. GEMINI_API_KEY"
   [[ "$SECRET_NAME" != VITE_* ]] || die "Las variables VITE_* acaban en el navegador: un secreto nunca puede llamarse así"
+  # Las mismas que rechaza el despliegue: cambian cómo arranca el proceso o las reserva Cloud Run.
+  case "$SECRET_NAME" in
+    PATH|PORT|HOME|NODE_*|NPM_*|LD_*|K_*) die "$SECRET_NAME es una variable reservada: usa otro nombre, p. ej. GEMINI_API_KEY" ;;
+  esac
   # ID de cuenta: 6 a 30 caracteres. Truncar podría hacer que dos apps compartieran cuenta.
   [[ ${#SVC} -le 26 ]] || die "El servicio '$SVC' es demasiado largo para su cuenta propia (máximo 26 caracteres)"
   local G=(--project "$GCP_PROJECT")
