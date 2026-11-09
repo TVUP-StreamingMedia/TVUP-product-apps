@@ -1,6 +1,6 @@
 ---
 name: deploy-app
-description: Despliega a producción los cambios de una app interna de TVUP ya promocionada. Enseña qué entra (commits, PR, resultado de la revisión de Claude, ficheros de gobierno), aprueba el build de Cloud Build tras confirmación explícita, despliega las reglas de Firestore si cambiaron, verifica la URL y permite volver atrás. Úsala siempre que Ingeniería diga "despliega", "publica los cambios", "aprueba el build", "¿qué hay pendiente?", "sube a producción jira-hub", "vuelve atrás" o "rollback", aunque no mencione la skill. Para la primera vez que una app llega a producción, usa promote-app.
+description: Despliega a producción los cambios de una app interna de TVUP ya promocionada. Enseña qué entra (commits, PR, resultado de la revisión de Claude, ficheros de gobierno), aprueba el build de Cloud Build tras confirmación explícita, despliega las reglas y los índices de Firestore (con su TTL) si cambiaron, verifica la URL y permite volver atrás. Úsala siempre que Ingeniería diga "despliega", "publica los cambios", "aprueba el build", "¿qué hay pendiente?", "sube a producción jira-hub", "vuelve atrás" o "rollback", aunque no mencione la skill. Para la primera vez que una app llega a producción, usa promote-app.
 ---
 
 # Desplegar cambios de una app ya promocionada
@@ -10,7 +10,7 @@ build que **espera aprobación**. Esta skill es ese momento de aprobación: tu
 trabajo es que el usuario apruebe sabiendo exactamente qué entra.
 
 Todo pasa por `scripts/release.sh`. No apruebes builds, no muevas tráfico ni
-despliegues reglas con comandos sueltos.
+despliegues reglas, índices ni TTL con comandos sueltos.
 
 Los subcomandos son `status`, `summary`, `approve`, `reject` y `rollback`. Los nombres
 antiguos en español (`estado`, `resumen`, `aprobar`, `rechazar`) siguen funcionando como alias.
@@ -52,7 +52,7 @@ explícitamente:
 | La revisión no está en verde | Hay hallazgos sin resolver |
 | Cambian ficheros de gobierno | `CLAUDE.md`, `cloudbuild.yaml`, `.github/` o `firebase.json` solo debe cambiarlos Ingeniería |
 
-Un cambio en `firestore.rules` no para la recomendación, pero avisa: se
+Un cambio en `firestore.rules` o `firestore.indexes.json` no para la recomendación, pero avisa: se
 desplegará junto con la app. Si la app tiene excepción en
 `promote-app/scripts/apps/<servicio>.env`, las reglas van a ese proyecto y esa base
 de datos (el script lo avisa): dilo en el resumen. Si puedes, lee el diff de las reglas y explica
@@ -68,11 +68,14 @@ scripts/release.sh reject  --app <app> --build <id>
 ```
 
 `approve` espera a que termine el build, devuelve el tráfico a la versión nueva,
-despliega las reglas de Firestore si cambiaron y comprueba que la URL responde.
+despliega las reglas y los índices de Firestore si cambiaron, comprueba que cada campo con
+`"ttl": true` tiene su política TTL activa y que la URL responde.
 
-Si cambian las reglas de Firestore, `approve` las valida **antes** de aprobar el build:
-deben venir de un PR y cada `allow` debe exigir login (`check-rules.pl`). Si no pasan,
-no se aprueba nada. Explica al usuario qué regla falla; el arreglo va en un PR nuevo.
+Si cambian las reglas o los índices de Firestore, `approve` los valida **antes** de aprobar el build:
+deben venir de un PR, cada `allow` debe exigir login (`check-rules.pl`) y el fichero de índices
+solo puede tener `indexes` y `fieldOverrides`. Si no pasan, no se aprueba nada. Si el script
+avisa de que el fichero **desactiva un TTL** (`"ttl": false`), dilo en el resumen antes de aprobar:
+deja de borrarse lo que la app debía borrar. Explica al usuario qué regla falla; el arreglo va en un PR nuevo.
 
 Si el build falla, lee el log que indica el script y busca la causa en
 `../promote-app/references/errores.md`. Lo habitual es que el arreglo vaya en
@@ -88,8 +91,8 @@ scripts/release.sh rollback --app <app> --yes
 
 Pide confirmación antes de pasar `--yes`. Explica dos cosas al usuario:
 
-- La vuelta atrás afecta al código, **no a las reglas de Firestore ni a los
-  datos**. Si el problema estaba en las reglas, hay que corregirlas con un PR.
+- La vuelta atrás afecta al código, **no a las reglas, los índices ni el TTL de Firestore,
+  ni a los datos**. Si el problema estaba en las reglas, hay que corregirlas con un PR.
 - El tráfico queda fijado a la versión anterior hasta el siguiente `approve`.
 
 ## Lo que no haces nunca

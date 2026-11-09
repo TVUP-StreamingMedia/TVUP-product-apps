@@ -72,6 +72,10 @@ need gcloud ""; need gh ""; need jq ""; need curl ""; need perl ""
 CHECK_RULES="$SCRIPT_DIR/../../promote-app/scripts/check-rules.pl"
 [[ -f "$CHECK_RULES" ]] || die "No encuentro check-rules.pl de promote-app"
 APP_OVERRIDES="$SCRIPT_DIR/../../promote-app/scripts/app-overrides.sh"
+FIRESTORE_DEPLOY="$SCRIPT_DIR/../../promote-app/scripts/firestore-deploy.sh"
+[[ -f "$FIRESTORE_DEPLOY" ]] || die "No encuentro firestore-deploy.sh de promote-app"
+# shellcheck source=../../promote-app/scripts/firestore-deploy.sh
+source "$FIRESTORE_DEPLOY"
 [[ -f "$APP_OVERRIDES" ]] || die "No encuentro app-overrides.sh de promote-app"
 
 REPO="$ORG/$APP"
@@ -205,8 +209,8 @@ cmd_summary() {
       warn "Cambian ficheros de gobierno (revisa que los aprobó Ingeniería):"
       grep -E "$GOVERNANCE_RE" <<<"$files" | sed 's/^/    /'
     else ok "Sin cambios en ficheros de gobierno"; fi
-    if grep -qx 'firestore.rules' <<<"$files"; then
-      warn "Cambian las reglas de Firestore: 'approve' las desplegará también"
+    if grep -qxE "$FIRESTORE_FILES_RE" <<<"$files"; then
+      warn "Cambian las reglas o los índices de Firestore: 'approve' los desplegará también"
     fi
   fi
 
@@ -219,31 +223,31 @@ cmd_summary() {
 
 # ---------------------------------------------------------------- reglas de Firestore
 # Se preparan y validan ANTES de aprobar el build: si no son válidas, no se despliega nada.
+# Los índices (y el TTL de sus fieldOverrides) van con las reglas: firestore-deploy.sh.
+FIRESTORE_FILES_RE='firestore\.rules|firestore\.indexes\.json'
 RULES_DIR=""
 prepare_rules() {
   local sha="$1" dir
   need firebase "npm install -g firebase-tools"
   [[ "$FIREBASE_PROJECT" != "CAMBIAR" ]] || die "Configura FIREBASE_PROJECT"
   [[ -n "$(pr_numbers "$sha")" ]] \
-    || die "Las reglas de Firestore cambian en un commit que no viene de un PR: no se despliegan sin revisión"
+    || die "Las reglas o los índices de Firestore cambian en un commit que no viene de un PR: no se despliegan sin revisión"
   dir="$(mktemp -d)"
   git clone -q "https://github.com/$REPO.git" "$dir/repo" && git -C "$dir/repo" checkout -q "$sha"
   [[ -f "$dir/repo/firestore.rules" && ! -L "$dir/repo/firestore.rules" ]] || die "Falta firestore.rules en ${sha:0:7}"
   perl "$CHECK_RULES" "$dir/repo/firestore.rules" \
     || die "firestore.rules deja datos accesibles sin login: no se despliega (ni el build)"
-  # Del repo solo se usan las reglas: el firebase.json lo escribe el script, con la base de datos
-  # de esta app y nada más (sin hooks predeploy ni bases de datos de otras apps).
-  mkdir "$dir/deploy" && cp "$dir/repo/firestore.rules" "$dir/deploy/firestore.rules"
-  jq -n --arg d "$FIRESTORE_DATABASE" '{firestore:[{database:$d, rules:"firestore.rules"}]}' > "$dir/deploy/firebase.json"
+  prepare_firestore_deploy "$dir/repo" "$dir/deploy" "$FIRESTORE_DATABASE"
   rm -rf "$dir/repo"
   RULES_DIR="$dir"
-  ok "Reglas de Firestore válidas"
+  ok "Reglas e índices de Firestore válidos"
 }
 deploy_rules() {
   (cd "$RULES_DIR/deploy" && firebase deploy --only firestore --project "$FIREBASE_PROJECT" --non-interactive >/dev/null) \
-    || die "No se pudieron desplegar las reglas de Firestore"
+    || die "No se pudieron desplegar las reglas y los índices de Firestore"
   rm -rf "$RULES_DIR"
-  ok "Reglas de Firestore desplegadas"
+  ok "Reglas e índices de Firestore desplegados"
+  verify_firestore_ttl "$FIREBASE_PROJECT" "$FIRESTORE_DATABASE"
 }
 
 # ---------------------------------------------------------------- approve
@@ -260,7 +264,7 @@ cmd_approve() {
     if truncated "$cmp"; then
       # Lista incompleta: si la app tiene reglas, se despliegan por si han cambiado.
       has_rules "$head" && changed=1
-    elif jq -r '.files[]?.filename' <<<"$cmp" | grep -qx 'firestore.rules'; then
+    elif jq -r '.files[]?.filename' <<<"$cmp" | grep -qxE "$FIRESTORE_FILES_RE"; then
       changed=1
     fi
   fi
