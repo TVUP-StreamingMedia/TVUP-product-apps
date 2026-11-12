@@ -58,7 +58,6 @@ Opciones:
   --subdomain <nombre>  Subdominio bajo apps.tvup.cloud (por defecto, el nombre del servicio)
   --firebase            Añade los dominios a Authorized domains de Firebase (deploy)
   --firestore           Crea la base de datos de la app y despliega sus reglas, índices y TTL (deploy)
-  --approve             Aprueba el build sin preguntar (para uso desde Claude Code)
   --login-ok            Confirma que la app N1/N2 tiene implementado el login de su CLAUDE.md (deploy)
   --name <VARIABLE>     Variable de entorno del secreto, p. ej. GEMINI_API_KEY      (secret)
   --sin-dns             No crea el CNAME en Route 53; muestra el registro para crearlo a mano (deploy)
@@ -75,7 +74,7 @@ EOF
 
 # ---------------------------------------------------------------- argumentos
 CMD="${1:-}"; [[ $# -gt 0 ]] && shift
-APP=""; SVC_ARG=""; ZIP=""; CLAUDE_MD=""; GEMINI_MD=""; SUB=""; FIREBASE=0; FIRESTORE=0; REUSE=0; APPROVE=0; LOGIN_OK=0; SIN_DNS=0; SECRET_NAME=""; DRY_RUN="${DRY_RUN:-0}"
+APP=""; SVC_ARG=""; ZIP=""; CLAUDE_MD=""; GEMINI_MD=""; SUB=""; FIREBASE=0; FIRESTORE=0; REUSE=0; LOGIN_OK=0; SIN_DNS=0; SECRET_NAME=""; DRY_RUN="${DRY_RUN:-0}"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --app)        APP="$2"; shift 2 ;;
@@ -86,7 +85,7 @@ while [[ $# -gt 0 ]]; do
     --subdomain)  SUB="$2"; shift 2 ;;
     --firebase)   FIREBASE=1; shift ;;
     --firestore)  FIRESTORE=1; shift ;;
-    --approve)    APPROVE=1; shift ;;
+    --approve)    die "--approve ya no existe: el build lo aprueba una persona (en la terminal o en la consola de Cloud Build)" ;;
     --login-ok)   LOGIN_OK=1; shift ;;
     --sin-dns)    SIN_DNS=1; shift ;;
     --name)       SECRET_NAME="$2"; shift 2 ;;
@@ -157,6 +156,8 @@ fi
 source "$SCRIPT_DIR/app-overrides.sh"
 # shellcheck source=firestore-deploy.sh
 source "$SCRIPT_DIR/firestore-deploy.sh"
+# shellcheck source=aprobacion.sh
+source "$SCRIPT_DIR/aprobacion.sh"
 load_app_overrides "$SVC"
 SUB="${SUB:-$SVC}"
 FQDN="$SUB.$APPS_DOMAIN"
@@ -700,15 +701,7 @@ cmd_deploy() {
   build_id="$(gcloud builds triggers run "$trigger" --region="$CB_REGION" --branch=main "${G[@]}" --format='value(metadata.build.id)')"
   [[ -n "$build_id" ]] || die "No se obtuvo el ID del build"
   echo "  Build $build_id en espera de aprobación"
-  [[ "$APPROVE" == "1" ]] || confirm "¿Apruebas el despliegue a producción de $APP?" \
-    || die "Despliegue no aprobado. Build $build_id queda pendiente (usa --approve para aprobarlo)"
-  # La CLI no aprueba builds regionales: se usa la API de Cloud Build.
-  curl -sf -X POST -H "Authorization: Bearer $(gcloud auth print-access-token)" -H "Content-Type: application/json" \
-    -d '{"approvalResult":{"decision":"APPROVED"}}' \
-    "https://cloudbuild.googleapis.com/v1/projects/$GCP_PROJECT/locations/$CB_REGION/builds/$build_id:approve" >/dev/null || {
-    warn "No se pudo aprobar automáticamente (¿falta el rol Cloud Build Approver?). Apruébalo en Cloud Build → History"
-    confirm "¿Ya lo has aprobado en la consola?" || die "Despliegue no aprobado"
-  }
+  human_approval "$build_id" "$APP"
   while :; do
     status="$(gcloud builds describe "$build_id" --region="$CB_REGION" "${G[@]}" --format='value(status)')"
     case "$status" in

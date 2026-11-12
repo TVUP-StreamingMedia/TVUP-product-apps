@@ -43,6 +43,8 @@ Uso:
 
 --rules fuerza el despliegue de firestore.rules aunque no hayan cambiado.
 approve, reject y rollback cambian producción: decídelo antes de ejecutarlos.
+approve no aprueba sin una persona: pregunta en la terminal o, sin terminal, espera a que se
+apruebe en la consola de Cloud Build. reject sí lo puede lanzar cualquiera: no cambia producción.
 EOF
 }
 
@@ -76,6 +78,10 @@ FIRESTORE_DEPLOY="$SCRIPT_DIR/../../promote-app/scripts/firestore-deploy.sh"
 [[ -f "$FIRESTORE_DEPLOY" ]] || die "No encuentro firestore-deploy.sh de promote-app"
 # shellcheck source=../../promote-app/scripts/firestore-deploy.sh
 source "$FIRESTORE_DEPLOY"
+APPROVAL="$SCRIPT_DIR/../../promote-app/scripts/aprobacion.sh"
+[[ -f "$APPROVAL" ]] || die "No encuentro aprobacion.sh de promote-app"
+# shellcheck source=../../promote-app/scripts/aprobacion.sh
+source "$APPROVAL"
 [[ -f "$APP_OVERRIDES" ]] || die "No encuentro app-overrides.sh de promote-app"
 
 REPO="$ORG/$APP"
@@ -270,9 +276,8 @@ cmd_approve() {
   fi
   if [[ "$changed" == "1" || "$RULES" == "1" ]]; then step "Reglas de Firestore"; prepare_rules "$head"; fi
 
-  step "Aprobando $BUILD"
-  decide_build "$BUILD" APPROVED \
-    || die "No se pudo aprobar (¿falta el rol Cloud Build Approver?). Apruébalo en Cloud Build → History y vuelve a 'status'"
+  step "Aprobación de $BUILD"
+  human_approval "$BUILD" "$APP"
   while :; do
     status="$(gcloud builds describe "$BUILD" --region="$CB_REGION" "${G[@]}" --format='value(status)')"
     case "$status" in
