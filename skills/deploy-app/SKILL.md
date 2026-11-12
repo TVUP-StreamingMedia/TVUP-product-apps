@@ -1,13 +1,14 @@
 ---
 name: deploy-app
-description: Despliega a producción los cambios de una app interna de TVUP ya promocionada. Enseña qué entra (commits, PR, resultado de la revisión de Claude, ficheros de gobierno), aprueba el build de Cloud Build tras confirmación explícita, despliega las reglas y los índices de Firestore (con su TTL) si cambiaron, verifica la URL y permite volver atrás. Úsala siempre que Ingeniería diga "despliega", "publica los cambios", "aprueba el build", "¿qué hay pendiente?", "sube a producción jira-hub", "vuelve atrás" o "rollback", aunque no mencione la skill. Para la primera vez que una app llega a producción, usa promote-app.
+description: Despliega a producción los cambios de una app interna de TVUP ya promocionada. Enseña qué entra (commits, PR, resultado de la revisión de Claude, ficheros de gobierno), prepara el build de Cloud Build para que lo apruebe el usuario en la consola, despliega las reglas y los índices de Firestore (con su TTL) si cambiaron, verifica la URL y permite volver atrás. Úsala siempre que Ingeniería diga "despliega", "publica los cambios", "aprueba el build", "¿qué hay pendiente?", "sube a producción jira-hub", "vuelve atrás" o "rollback", aunque no mencione la skill. Para la primera vez que una app llega a producción, usa promote-app.
 ---
 
 # Desplegar cambios de una app ya promocionada
 
 Cuando se hace merge de un PR en `main`, el trigger de Cloud Build crea un
 build que **espera aprobación**. Esta skill es ese momento de aprobación: tu
-trabajo es que el usuario apruebe sabiendo exactamente qué entra.
+trabajo es que el usuario apruebe sabiendo exactamente qué entra. **Quien aprueba es el usuario,
+nunca tú.**
 
 Todo pasa por `scripts/release.sh`. No apruebes builds, no muevas tráfico ni
 despliegues reglas, índices ni TTL con comandos sueltos.
@@ -62,6 +63,13 @@ qué permiten de nuevo.
 
 **Pregunta siempre antes, con el resumen delante.** Aprobar cambia producción.
 
+`approve` prepara y valida lo necesario (reglas, índices), pero **no aprueba el build**. Desde
+Claude Code (sin terminal), muestra el enlace del build en la consola de Cloud Build y espera hasta
+60 minutos a que el usuario pulse «Approve» o «Reject». Después termina el despliegue: tráfico,
+reglas, índices, TTL y comprobación. Lánzalo en segundo plano y pásale el enlace al usuario. No
+apruebes el build por otra vía (`curl` a la API, `gcloud`, una terminal simulada). `reject` sí puedes
+lanzarlo con confirmación, porque no cambia producción.
+
 ```bash
 scripts/release.sh approve --app <app> --build <id>
 scripts/release.sh reject  --app <app> --build <id>
@@ -97,7 +105,8 @@ Pide confirmación antes de pasar `--yes`. Explica dos cosas al usuario:
 
 ## Lo que no haces nunca
 
-- Aprobar, rechazar o volver atrás sin confirmación explícita en el chat.
+- Aprobar un build: lo aprueba el usuario en la consola o en su terminal.
+- Rechazar o volver atrás sin confirmación explícita en el chat.
 - Aprobar con alguna de las tres alertas sin que el usuario la haya aceptado.
 - Lanzar builds, cambiar triggers o tocar Cloud Run fuera del script.
 - Hacer merge de PRs: eso lo decide quien revisa el PR.

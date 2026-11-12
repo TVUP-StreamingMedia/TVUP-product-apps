@@ -101,9 +101,14 @@ Esta es la parte que el script no hace.
 
 ## Fase 3 — Despliegue (pasos 17 a 22)
 
-**Dos decisiones son siempre del usuario, en el chat, antes de pasar la opción:**
+**La aprobación del build la da siempre una persona, nunca tú.** Lanzado desde Claude Code (sin
+terminal), el script no aprueba: muestra el enlace del build en la consola de Cloud Build y espera
+hasta 60 minutos a que el usuario pulse «Approve» o «Reject». Lánzalo en segundo plano, pásale ese
+enlace al usuario y espera. `--approve` ya no existe. No apruebes el build por otra vía
+(`curl` a la API, `gcloud`, una terminal simulada): sería saltarse el control.
 
-- `--approve`: aprobar el build de producción. Pregúntalo explícitamente.
+**Una decisión es del usuario, en el chat, antes de pasar la opción:**
+
 - `--login-ok`: solo para N1/N2. Antes de preguntarlo, mira `LOGIN CORPORATIVO:` en el
   `CLAUDE.md` de la app y comprueba tú en el código que ese login existe. Con Microsoft 365:
   proveedor `microsoft.com`, restricción de tenant y `ConLogin` envolviendo la app. Con otro
@@ -112,7 +117,7 @@ Esta es la parte que el script no hace.
   Si el login está «por decidir con Ingeniería», el script no la hace pública en ningún caso.
 
 ```bash
-scripts/promote-app.sh deploy --app <app> [--firebase] [--firestore] [--approve] [--login-ok]
+scripts/promote-app.sh deploy --app <app> [--firebase] [--firestore] [--login-ok]
 ```
 
 Ejecútalo primero con `--dry-run` la primera vez que se use en un equipo.
@@ -201,7 +206,8 @@ Antes de lanzar `deploy` en una app con excepción, díselo al usuario y enséñ
 
 ## Lo que no haces nunca
 
-- Aprobar un build o hacer pública una app sin confirmación explícita en el chat.
+- Aprobar un build: lo aprueba el usuario en la consola o en su terminal.
+- Hacer pública una app sin confirmación explícita en el chat.
 - Ejecutar a mano pasos que hace el script (crear triggers, tocar DNS,
   cambiar Authorized domains). Si el script falla, se arregla el script o la
   configuración; no se rodea.
