@@ -882,6 +882,14 @@ cmd_secret() {
   reintentar run gcloud iam service-accounts add-iam-policy-binding "$sa" --member="serviceAccount:$build_sa" \
     --role=roles/iam.serviceAccountUser --format=none "${G[@]}" || die "No se pudo dar actAs a $build_sa sobre $sa_id"
   ok "$build_sa puede desplegar con ella"
+  # La cuenta del despliegue diario (deploy-app) mueve el tráfico de la app: también necesita actAs.
+  if [[ -n "${DEPLOY_SA:-}" ]]; then
+    reintentar run gcloud iam service-accounts add-iam-policy-binding "$sa" --member="serviceAccount:$DEPLOY_SA" \
+      --role=roles/iam.serviceAccountUser --format=none "${G[@]}" || die "No se pudo dar actAs a $DEPLOY_SA sobre $sa_id"
+    ok "$DEPLOY_SA puede desplegarla a diario"
+  else
+    warn "DEPLOY_SA vacío en la configuración: deploy-app no podrá mover el tráfico de $SVC"
+  fi
 
   step "Secreto $secret (réplica en $REGION)"
   if gcloud secrets describe "$secret" "${G[@]}" >/dev/null 2>&1; then

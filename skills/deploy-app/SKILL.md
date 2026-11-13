@@ -105,7 +105,10 @@ Pide confirmación antes de pasar `--yes`. Explica dos cosas al usuario:
 
 ## Lo que no haces nunca
 
-- Aprobar un build: lo aprueba el usuario en la consola o en su terminal.
+- Aprobar un build: lo aprueba el usuario en la consola de Cloud Build, con su cuenta personal (también
+  el rechazo: `reject` necesita el mismo permiso). La
+  cuenta de despliegue (`tvup-deploy`) no puede aprobar, así que desde la terminal la API lo rechaza
+  y el script remite a la consola (ADR-0002).
 - Rechazar o volver atrás sin confirmación explícita en el chat.
 - Aprobar con alguna de las tres alertas sin que el usuario la haya aceptado.
 - Lanzar builds, cambiar triggers o tocar Cloud Run fuera del script.

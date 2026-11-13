@@ -71,6 +71,15 @@ source "$CONFIG_FILE"
 # Cloud Build va en la región de su conexión con GitHub, que puede no ser la de Cloud Run.
 CB_REGION="${CB_REGION:-$REGION}"
 need gcloud ""; need gh ""; need jq ""; need curl ""; need perl ""
+# ADR-0002: el despliegue diario va con la cuenta de despliegue (sin rol de aprobador), haciéndose
+# pasar por ella desde gcloud. Una cuenta personal, sobre todo de Owner, deja que quien lance el
+# script (también la IA) apruebe builds o cambie permisos.
+IMPERSONADA="$(gcloud config get-value auth/impersonate_service_account 2>/dev/null || true)"
+if [[ -z "$IMPERSONADA" ]]; then
+  warn "gcloud no usa la cuenta de despliegue: va con $(gcloud config get-value account 2>/dev/null || echo 'una cuenta personal'). Configúrala como dice el ADR-0002"
+elif [[ -n "${DEPLOY_SA:-}" && "$IMPERSONADA" != "$DEPLOY_SA" ]]; then
+  warn "gcloud se hace pasar por $IMPERSONADA, no por la cuenta de despliegue ($DEPLOY_SA)"
+fi
 CHECK_RULES="$SCRIPT_DIR/../../promote-app/scripts/check-rules.pl"
 [[ -f "$CHECK_RULES" ]] || die "No encuentro check-rules.pl de promote-app"
 APP_OVERRIDES="$SCRIPT_DIR/../../promote-app/scripts/app-overrides.sh"
