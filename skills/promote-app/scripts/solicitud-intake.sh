@@ -88,9 +88,13 @@ descargar_solicitud() {
   done
 
   [[ -f "$dir/CLAUDE.md" ]] || die "La solicitud #$num no trae CLAUDE.md"
+  # Una sola línea con cada campo, y con formato estricto: así cualquier lector del perfil
+  # (tier_from y servicio_de en promote-app.sh) obtiene el mismo valor que se comprueba aquí.
   local perfil_svc perfil_tier
-  perfil_svc="$(grep -E '^SERVICIO:' "$dir/CLAUDE.md" | head -1 | awk '{print $2}')"
-  perfil_tier="$(grep -E '^TIER DE INTAKE:' "$dir/CLAUDE.md" | head -1 | awk '{print $4}')"
+  [[ "$(grep -c 'TIER DE INTAKE:' "$dir/CLAUDE.md")" == "1" ]] || die "El CLAUDE.md debe tener una sola línea «TIER DE INTAKE:»"
+  [[ "$(grep -c 'SERVICIO:' "$dir/CLAUDE.md")" == "1" ]] || die "El CLAUDE.md debe tener una sola línea «SERVICIO:»"
+  perfil_tier="$(sed -nE 's/^TIER DE INTAKE:[[:space:]]+(N[012])[[:space:]]*$/\1/p' "$dir/CLAUDE.md")"
+  perfil_svc="$(sed -nE 's/^SERVICIO:[[:space:]]+([a-z]([a-z0-9-]*[a-z0-9])?)[[:space:]]*$/\1/p' "$dir/CLAUDE.md")"
   [[ "$perfil_svc" == "$SOLICITUD_SERVICIO" ]] || die "El SERVICIO del CLAUDE.md ($perfil_svc) no coincide con la solicitud ($SOLICITUD_SERVICIO)"
   [[ "$perfil_tier" == "$SOLICITUD_TIER" ]] || die "El nivel del CLAUDE.md ($perfil_tier) no coincide con la solicitud ($SOLICITUD_TIER)"
   ok "Solicitud #$num: $SOLICITUD_SERVICIO ($SOLICITUD_TIER)"
