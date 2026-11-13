@@ -79,6 +79,7 @@ EOF
 CMD="${1:-}"; [[ $# -gt 0 ]] && shift
 APP=""; SVC_ARG=""; ZIP=""; CLAUDE_MD=""; GEMINI_MD=""; SUB=""; FIREBASE=0; FIRESTORE=0; REUSE=0; LOGIN_OK=0; SIN_DNS=0; SECRET_NAME=""; ISSUE=""; DRY_RUN="${DRY_RUN:-0}"
 while [[ $# -gt 0 ]]; do
+  case "$1" in --app|--service|--zip|--claude-md|--gemini-md|--issue|--subdomain|--name) [[ $# -ge 2 ]] || die "Falta el valor de $1" ;; esac
   case "$1" in
     --app)        APP="$2"; shift 2 ;;
     --service)    SVC_ARG="$2"; shift 2 ;;
@@ -102,31 +103,46 @@ done
 [[ "$CMD" == "crear" ]] && CMD="create"   # nombre antiguo, se mantiene como alias
 [[ "$CMD" == "secreto" ]] && CMD="secret"
 [[ "$CMD" =~ ^(create|promote|deploy|secret)$ ]] || { usage; exit 1; }
+[[ -f "$CONFIG_FILE" ]] || die "No encuentro la configuración: $CONFIG_FILE (cópiala de promote-app.env.example)"
+# shellcheck source=/dev/null
+source "$CONFIG_FILE"
+# Cloud Build va en la región de su conexión con GitHub, que puede no ser la de Cloud Run.
+CB_REGION="${CB_REGION:-$REGION}"
+
 # Con --issue, CLAUDE.md (y GEMINI.md) salen de la solicitud del intake, verificada: autor la
 # GitHub App del intake, sin ediciones y con el hash que calculó su servidor (solicitud-intake.sh).
 if [[ -n "$ISSUE" ]]; then
   [[ "$CMD" == "create" ]] || die "--issue solo vale con create"
   [[ -z "$CLAUDE_MD$GEMINI_MD" ]] || die "Con --issue, los ficheros salen de la solicitud: no pases --claude-md ni --gemini-md"
   need gh "Instala GitHub CLI."; need jq "Instala jq."
+  INTAKE_REPO="$ORG/TVUP-product-apps"
   # shellcheck source=solicitud-intake.sh
   source "$SCRIPT_DIR/solicitud-intake.sh"
-  SOLICITUD_DIR="$(mktemp -d)"
+  SOLICITUD_DIR="$(mktemp -d)"; trap 'rm -rf "$SOLICITUD_DIR"' EXIT
   step "Solicitud del intake #$ISSUE"
   descargar_solicitud "$ISSUE" "$SOLICITUD_DIR"
   CLAUDE_MD="$SOLICITUD_DIR/CLAUDE.md"
   [[ -f "$SOLICITUD_DIR/GEMINI.md" ]] && GEMINI_MD="$SOLICITUD_DIR/GEMINI.md"
+  # N2: la aprobación escrita de Ingeniería y Seguridad la confirma una persona en la terminal.
+  # El script no la busca en la issue: un comentario lo podría escribir cualquiera con la cuenta.
+  if [[ "$SOLICITUD_TIER" == "N2" ]]; then
+    if [[ "$DRY_RUN" == "1" ]]; then
+      warn "N2: sin --dry-run se pedirá confirmar la aprobación de Ingeniería y Seguridad"
+    else
+      confirm "N2: ¿Ingeniería y Seguridad han aprobado por escrito esta app (comentario en la issue #$ISSUE)?" \
+        || die "Sin aprobación N2 no se crea el repo. Déjala como comentario en la issue #$ISSUE y vuelve a lanzarlo en una terminal"
+    fi
+  fi
+elif [[ "$CMD" == "create" && "$DRY_RUN" != "1" ]]; then
+  warn "Sin --issue no se comprueba que el CLAUDE.md sea el que generó el intake (nivel incluido)."
+  confirm "¿Crear el repo con un CLAUDE.md sin verificar?" \
+    || die "Usa create --issue <número>, o confírmalo tú en una terminal interactiva"
 fi
 # En create, el nombre del repo sale por defecto del perfil del intake (línea SERVICIO).
 if [[ "$CMD" == "create" && -z "$APP" && -f "$CLAUDE_MD" ]]; then
   APP="$(grep -E '^SERVICIO:' "$CLAUDE_MD" | head -1 | awk '{print $2}')"
 fi
 [[ -n "$APP" ]] || die "Falta --app"
-
-[[ -f "$CONFIG_FILE" ]] || die "No encuentro la configuración: $CONFIG_FILE (cópiala de promote-app.env.example)"
-# shellcheck source=/dev/null
-source "$CONFIG_FILE"
-# Cloud Build va en la región de su conexión con GitHub, que puede no ser la de Cloud Run.
-CB_REGION="${CB_REGION:-$REGION}"
 
 # Dominios de correo que pueden entrar, separados por espacios. Una config antigua con
 # DOMINIO_CORPORATIVO (uno solo) sigue valiendo. Se escriben en código TS y en reglas de
@@ -198,10 +214,8 @@ login_from() {
 }
 
 tier_from() {
-  local line
-  line="$(grep -E 'TIER DE INTAKE:' "$1" | head -1 || true)"
-  [[ -z "$line" || "$line" == *"|"* ]] && { echo ""; return; }
-  echo "$line" | grep -oE 'N[012]' | head -1 || true
+  # Misma regla estricta que solicitud-intake.sh: la línea del perfil, al principio de línea.
+  sed -nE "s/^TIER DE INTAKE:[[:space:]]+(N[012])[[:space:]]*\$/\\1/p" "$1" | head -1 || true
 }
 
 # Escribe src/lib/firebase-config.ts con el proyecto Firebase estándar y la base de datos de la app.

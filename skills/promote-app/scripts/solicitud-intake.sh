@@ -16,7 +16,7 @@
 #
 # Necesita gh y jq, y las funciones ok, warn y die de quien lo carga.
 
-INTAKE_REPO="TVUP-StreamingMedia/TVUP-product-apps"
+INTAKE_REPO="${INTAKE_REPO:-TVUP-StreamingMedia/TVUP-product-apps}"   # promote-app.sh lo fija con ORG
 INTAKE_BOT="tvup-product-intake"   # login de la App; en GraphQL el autor aparece sin «[bot]»
 
 sha256_de() { if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1"; else shasum -a 256 "$1"; fi | awk '{print $1}'; }
@@ -33,12 +33,13 @@ descargar_solicitud() {
     query($owner: String!, $repo: String!, $num: Int!) {
       repository(owner: $owner, name: $repo) {
         issue(number: $num) {
-          state body lastEditedAt author { login __typename }
+          state stateReason body lastEditedAt author { login __typename }
           labels(first: 20) { nodes { name } }
-          comments(first: 20) { totalCount nodes { body lastEditedAt author { login __typename } } }
+          comments(first: 100) { totalCount nodes { body lastEditedAt author { login __typename } } }
         }
       }
-    }' --jq '.data.repository.issue')" || die "No se pudo leer la issue #$num de $INTAKE_REPO"
+    }' --jq '.data.repository.issue' 2>/dev/null)" \
+    || die "No se pudo leer la issue #$num de $INTAKE_REPO: comprueba que existe, que es una issue (no un PR) y la sesión de gh"
   [[ -n "$datos" && "$datos" != "null" ]] || die "La issue #$num no existe en $INTAKE_REPO"
 
   # Autor, etiqueta y sin ediciones.
@@ -46,8 +47,9 @@ descargar_solicitud() {
     || die "La issue #$num no la creó el intake ($INTAKE_BOT): no se usa"
   jq -e '[.labels.nodes[].name] | index("intake")' <<<"$datos" >/dev/null || die "La issue #$num no tiene la etiqueta intake"
   jq -e '.lastEditedAt == null' <<<"$datos" >/dev/null || die "La issue #$num se ha editado después de crearla: no se usa"
-  [[ "$(jq -r '.state' <<<"$datos")" == "OPEN" ]] || die "La issue #$num está cerrada"
-  (( $(jq -r '.comments.totalCount' <<<"$datos") <= 20 )) || die "La issue #$num tiene demasiados comentarios para revisarla"
+  # Cerrada como «no planificada»: el intake lo hace si el envío falla a medias, o Ingeniería la rechazó.
+  [[ "$(jq -r '.stateReason' <<<"$datos")" != "NOT_PLANNED" ]] || die "La issue #$num está cerrada como no planificada: no se usa"
+  (( $(jq -r '.comments.totalCount' <<<"$datos") <= 100 )) || die "La issue #$num tiene más de 100 comentarios: no se pueden revisar todos"
 
   # Bloque legible por máquina (primera línea del cuerpo).
   bloque="$(jq -r '.body | split("\n")[0]' <<<"$datos" | sed -n 's/^<!-- intake-solicitud:v1 \(.*\) -->$/\1/p')"

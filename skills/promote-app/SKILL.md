@@ -60,10 +60,12 @@ servidor del intake:
 
 Si algo falla, **no lo rodees** pasando el fichero con `--claude-md`: pide a Producto que vuelva a
 enviar la solicitud. Con un N2, antes de crear el repo hace falta la aprobación de Ingeniería y
-Seguridad: déjala como comentario en la propia issue.
+Seguridad: déjala como comentario en la propia issue. El script pide a una persona que lo confirme
+en la terminal; sin terminal (Claude Code) se para, y es lo esperado: díselo al usuario.
 
 `--claude-md <CLAUDE.md> [--gemini-md <GEMINI.md>]` sigue existiendo para apps anteriores al
-envío desde el intake o si este no está disponible; dile al usuario que así no hay verificación.
+envío desde el intake o si este no está disponible. Así no hay verificación, y el script pide a una
+persona que lo confirme en la terminal: la IA no puede usar esta vía por su cuenta.
 
 El nombre del repo sale del perfil (línea `SERVICIO`). El script crea el repo desde la plantilla y,
 según el perfil, añade:
