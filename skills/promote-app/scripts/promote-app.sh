@@ -44,6 +44,7 @@ pnpm_q() { local out; out="$(pnpm "$@" 2>&1)" && return 0; echo "$out" | tail -1
 usage() {
   cat <<'EOF'
 Uso:
+  promote-app.sh create  --issue <número> [--app <repo>]   (solicitud enviada desde el intake)
   promote-app.sh create  --claude-md <CLAUDE.md> [--gemini-md <GEMINI.md>] [--app <repo>]
   promote-app.sh promote --app <repo> --zip <codigo.zip> --claude-md <CLAUDE.md> [opciones]
   promote-app.sh deploy  --app <repo> [opciones]
@@ -55,6 +56,8 @@ Opciones:
   --zip <ruta>          ZIP descargado de Google AI Studio            (promote)
   --claude-md <ruta>    CLAUDE.md generado por el intake              (create, promote)
   --gemini-md <ruta>    GEMINI.md generado por el intake, si se usará AI Studio (create)
+  --issue <número>      Solicitud del intake en TVUP-product-apps: usa sus ficheros si los
+                        publicó el intake sin ediciones y su hash coincide       (create)
   --subdomain <nombre>  Subdominio bajo apps.tvup.cloud (por defecto, el nombre del servicio)
   --firebase            Añade los dominios a Authorized domains de Firebase (deploy)
   --firestore           Crea la base de datos de la app y despliega sus reglas, índices y TTL (deploy)
@@ -74,7 +77,7 @@ EOF
 
 # ---------------------------------------------------------------- argumentos
 CMD="${1:-}"; [[ $# -gt 0 ]] && shift
-APP=""; SVC_ARG=""; ZIP=""; CLAUDE_MD=""; GEMINI_MD=""; SUB=""; FIREBASE=0; FIRESTORE=0; REUSE=0; LOGIN_OK=0; SIN_DNS=0; SECRET_NAME=""; DRY_RUN="${DRY_RUN:-0}"
+APP=""; SVC_ARG=""; ZIP=""; CLAUDE_MD=""; GEMINI_MD=""; SUB=""; FIREBASE=0; FIRESTORE=0; REUSE=0; LOGIN_OK=0; SIN_DNS=0; SECRET_NAME=""; ISSUE=""; DRY_RUN="${DRY_RUN:-0}"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --app)        APP="$2"; shift 2 ;;
@@ -82,6 +85,7 @@ while [[ $# -gt 0 ]]; do
     --zip)        ZIP="$2"; shift 2 ;;
     --claude-md)  CLAUDE_MD="$2"; shift 2 ;;
     --gemini-md)  GEMINI_MD="$2"; shift 2 ;;
+    --issue)      ISSUE="$2"; shift 2 ;;
     --subdomain)  SUB="$2"; shift 2 ;;
     --firebase)   FIREBASE=1; shift ;;
     --firestore)  FIRESTORE=1; shift ;;
@@ -98,6 +102,20 @@ done
 [[ "$CMD" == "crear" ]] && CMD="create"   # nombre antiguo, se mantiene como alias
 [[ "$CMD" == "secreto" ]] && CMD="secret"
 [[ "$CMD" =~ ^(create|promote|deploy|secret)$ ]] || { usage; exit 1; }
+# Con --issue, CLAUDE.md (y GEMINI.md) salen de la solicitud del intake, verificada: autor la
+# GitHub App del intake, sin ediciones y con el hash que calculó su servidor (solicitud-intake.sh).
+if [[ -n "$ISSUE" ]]; then
+  [[ "$CMD" == "create" ]] || die "--issue solo vale con create"
+  [[ -z "$CLAUDE_MD$GEMINI_MD" ]] || die "Con --issue, los ficheros salen de la solicitud: no pases --claude-md ni --gemini-md"
+  need gh "Instala GitHub CLI."; need jq "Instala jq."
+  # shellcheck source=solicitud-intake.sh
+  source "$SCRIPT_DIR/solicitud-intake.sh"
+  SOLICITUD_DIR="$(mktemp -d)"
+  step "Solicitud del intake #$ISSUE"
+  descargar_solicitud "$ISSUE" "$SOLICITUD_DIR"
+  CLAUDE_MD="$SOLICITUD_DIR/CLAUDE.md"
+  [[ -f "$SOLICITUD_DIR/GEMINI.md" ]] && GEMINI_MD="$SOLICITUD_DIR/GEMINI.md"
+fi
 # En create, el nombre del repo sale por defecto del perfil del intake (línea SERVICIO).
 if [[ "$CMD" == "create" && -z "$APP" && -f "$CLAUDE_MD" ]]; then
   APP="$(grep -E '^SERVICIO:' "$CLAUDE_MD" | head -1 | awk '{print $2}')"
