@@ -65,9 +65,12 @@ Separar **lo que hace la IA** de **lo que decide una persona**. Revisión del 20
    - **Sin `serviceAccountUser` sobre las cuentas de ejecución de las apps.** Con ese permiso y
      `run.developer` podría desplegar en Cloud Run una revisión con cualquier imagen
      (`gcloud run deploy --image`), sin pasar por Cloud Build ni por la aprobación, y con la cuenta
-     que lee los secretos de la app. Se dio por error el 2026-11-13 y se retira. Hay que comprobar que
-     el rollback (`update-traffic`) funciona sin él; si no, el rollback se hace desde la consola o
-     con un rol propio que no cree revisiones.
+     que lee los secretos de la app. Se dio por error el 2026-11-13 y se retiró ese mismo día.
+   - **El rollback va en la consola de Cloud Run, con la cuenta personal.** Probado el 2026-11-13: sin
+     ese permiso, `update-traffic` con `tvup-deploy` falla (pide leer la imagen de Artifact Registry y,
+     probablemente después, `actAs`). No se le dan esos permisos: con ellos volvería a poder publicar
+     sin aprobación. Si hiciera falta automatizarlo, sería con un rol propio que mueva tráfico sin
+     crear revisiones.
    - La cuenta personal de Owner salió del portátil (`gcloud auth revoke`). Se usa solo en el
      navegador: aprobar en la consola de Cloud Build y, en **Cloud Shell**, lo que crea recursos o
      permisos (`promote-app` `create`, `promote`, `deploy` y `secret`, y `setup-build-sa.sh`).

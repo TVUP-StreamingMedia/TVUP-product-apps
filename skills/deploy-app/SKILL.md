@@ -97,6 +97,11 @@ Si tras desplegar la app no funciona:
 scripts/release.sh rollback --app <app> --yes
 ```
 
+Con la cuenta de despliegue (`tvup-deploy`) el script no puede mover el tráfico: es a propósito, porque
+esos permisos le dejarían publicar sin aprobación (ADR-0002). El script se para y da el enlace para que
+el usuario lo haga en la consola de Cloud Run con su cuenta («Manage traffic» → 100 % a la revisión
+anterior). Díselo así; no pidas más permisos para la cuenta.
+
 Pide confirmación antes de pasar `--yes`. Explica dos cosas al usuario:
 
 - La vuelta atrás afecta al código, **no a las reglas, los índices ni el TTL de Firestore,
