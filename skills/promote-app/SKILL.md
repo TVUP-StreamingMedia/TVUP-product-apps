@@ -42,14 +42,33 @@ Comprueba, sin preguntar lo que puedas averiguar tú:
 
 ## Fase 0 — Crear el repo de la app
 
-Cuando Producto entrega los ficheros del intake (antes de construir nada):
+Producto envía la solicitud desde el intake («Enviar a Ingeniería»). Llega como issue en
+`TVUP-product-apps`, con la etiqueta `intake` y la del nivel. Para ver las pendientes:
+`gh issue list --repo TVUP-StreamingMedia/TVUP-product-apps --label intake`.
 
 ```bash
-scripts/promote-app.sh create --claude-md <CLAUDE.md> [--gemini-md <GEMINI.md>] --dry-run
+scripts/promote-app.sh create --issue <número> --dry-run
 ```
 
-`--gemini-md` solo si la app se construirá en AI Studio. El nombre del repo sale del perfil
-(línea `SERVICIO`). El script crea el repo desde la plantilla y, según el perfil, añade:
+Antes de crear nada, el script comprueba que los ficheros son exactamente los que generó el
+servidor del intake:
+
+- la issue y sus comentarios son de la GitHub App `tvup-product-intake`;
+- nada se ha editado después;
+- el sha256 de cada fichero coincide;
+- el nivel y el servicio del `CLAUDE.md` coinciden con los que calculó el servidor.
+
+Si algo falla, **no lo rodees** pasando el fichero con `--claude-md`: pide a Producto que vuelva a
+enviar la solicitud. Con un N2, antes de crear el repo hace falta la aprobación de Ingeniería y
+Seguridad: déjala como comentario en la propia issue. El script pide a una persona que lo confirme
+en la terminal; sin terminal (Claude Code) se para, y es lo esperado: díselo al usuario.
+
+`--claude-md <CLAUDE.md> [--gemini-md <GEMINI.md>]` sigue existiendo para apps anteriores al
+envío desde el intake o si este no está disponible. Así no hay verificación, y el script pide a una
+persona que lo confirme en la terminal: la IA no puede usar esta vía por su cuenta.
+
+El nombre del repo sale del perfil (línea `SERVICIO`). El script crea el repo desde la plantilla y,
+según el perfil, añade:
 
 - el esqueleto de la app (Vite + React + TypeScript, con arranque para Cloud Run);
 - el login Microsoft 365 ya funcionando, envolviendo la app;
