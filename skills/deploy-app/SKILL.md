@@ -97,6 +97,11 @@ Si tras desplegar la app no funciona:
 scripts/release.sh rollback --app <app> --yes
 ```
 
+Con la cuenta de despliegue (`tvup-deploy`) el script no puede mover el tráfico: es a propósito, porque
+esos permisos le dejarían publicar sin aprobación (ADR-0002). El script se para y da el enlace para que
+el usuario lo haga en la consola de Cloud Run con su cuenta («Manage traffic» → 100 % a la revisión
+anterior). Díselo así; no pidas más permisos para la cuenta.
+
 Pide confirmación antes de pasar `--yes`. Explica dos cosas al usuario:
 
 - La vuelta atrás afecta al código, **no a las reglas, los índices ni el TTL de Firestore,
@@ -105,7 +110,10 @@ Pide confirmación antes de pasar `--yes`. Explica dos cosas al usuario:
 
 ## Lo que no haces nunca
 
-- Aprobar un build: lo aprueba el usuario en la consola o en su terminal.
+- Aprobar un build: lo aprueba el usuario en la consola de Cloud Build, con su cuenta personal (también
+  el rechazo: `reject` necesita el mismo permiso). La
+  cuenta de despliegue (`tvup-deploy`) no puede aprobar, así que desde la terminal la API lo rechaza
+  y el script remite a la consola (ADR-0002).
 - Rechazar o volver atrás sin confirmación explícita en el chat.
 - Aprobar con alguna de las tres alertas sin que el usuario la haya aceptado.
 - Lanzar builds, cambiar triggers o tocar Cloud Run fuera del script.

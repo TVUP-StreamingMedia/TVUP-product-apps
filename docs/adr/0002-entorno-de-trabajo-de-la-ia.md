@@ -1,7 +1,7 @@
 # ADR-0002: Qué puede tocar la IA en el entorno de ProductDev
 
-**Estado:** Propuesta
-**Fecha:** 2026-11-12
+**Estado:** Aceptada (pasos 1 a 4); paso 5 propuesto
+**Fecha:** 2026-11-12 (revisada el 2026-11-13)
 **Deciden:** Ingeniería (CTO) y Seguridad
 
 ## Contexto
@@ -29,8 +29,8 @@ dependencia, por ejemplo) hereda esas credenciales.
 
 ## Decisión
 
-Separar **lo que hace la IA** de **lo que decide una persona**, en cinco pasos. Los dos primeros ya
-están hechos; los tres siguientes son los que se proponen aquí.
+Separar **lo que hace la IA** de **lo que decide una persona**. Revisión del 2026-11-13: los pasos
+1, 2 y 4 están hechos, el 3 cambia (sin DevContainer) y el 5 sigue propuesto.
 
 ### Hecho
 
@@ -38,8 +38,8 @@ están hechos; los tres siguientes son los que se proponen aquí.
    scripts preparan el build y muestran el enlace a la consola de Cloud Build; si se ejecutan sin
    terminal (desde el agente), esperan a que una persona apruebe o rechace allí. Las skills
    `promote-app` y `deploy-app` prohíben aprobar por otras vías.
-   *Límite:* es un control de proceso. Mientras el agente use una cuenta con el rol de aprobador,
-   podría aprobar llamando a la API. Lo cierra el paso 4.
+   Desde el paso 4 ya no es solo un control de proceso: la cuenta que usa el agente no tiene el
+   permiso de aprobar.
 2. **Sandbox de Claude Code** (configuración local, `~/.claude/settings.json`). Los comandos del
    agente se ejecutan en un aislamiento del sistema operativo (Seatbelt en macOS):
    - no puede leer `~/.aws`, `~/.config/gcloud`, `~/.config/gh`, `~/.config/configstore` ni `~/.ssh`;
@@ -51,31 +51,61 @@ están hechos; los tres siguientes son los que se proponen aquí.
    Verificado el 2026-11-12: leer credenciales, escribir fuera de los repos y conectar con un dominio
    no autorizado quedan bloqueados.
    *Límite:* `gcloud`, `gh`, `firebase`, `aws`, `git push/pull/fetch/clone` y los scripts de
-   despliegue están excluidos del sandbox porque necesitan credenciales: se ejecutan con todos los
-   permisos de la persona y solo los frena la confirmación de permisos de Claude Code. El sandbox
-   protege del resto: dependencias, código que genera el agente y lecturas de ficheros.
+   despliegue están excluidos del sandbox porque necesitan credenciales. Desde el paso 4, `gcloud`
+   solo tiene los permisos de la cuenta de despliegue.
+4. **Cuenta de despliegue con mínimo privilegio, sin rol de aprobador** (2026-11-13).
+   - El equipo de Ingeniería solo tiene sesión de gcloud con `deploy@tvup.media`. Es una cuenta
+     nominal de uso técnico: la usa solo el CTO, tiene verificación en dos pasos y ningún rol en el
+     proyecto. Lo único que puede hacer es hacerse pasar por la cuenta de servicio `tvup-deploy`
+     (configuración `deploy` con `auth/impersonate_service_account`, y ADC igual para `firebase`).
+   - `tvup-deploy` tiene `cloudbuild.builds.viewer`, `cloudbuild.connectionViewer`, `logging.viewer`,
+     `run.developer`, `firebaserules.admin`, `datastore.indexAdmin` y
+     `serviceusage.serviceUsageConsumer`. **No puede aprobar ni rechazar builds, ni leer o cambiar IAM**
+     (verificado: `getIamPolicy` denegado).
+   - **Sin `serviceAccountUser` sobre las cuentas de ejecución de las apps.** Con ese permiso y
+     `run.developer` podría desplegar en Cloud Run una revisión con cualquier imagen
+     (`gcloud run deploy --image`), sin pasar por Cloud Build ni por la aprobación, y con la cuenta
+     que lee los secretos de la app. Se dio por error el 2026-11-13 y se retiró ese mismo día.
+   - **El rollback va en la consola de Cloud Run, con la cuenta personal.** Probado el 2026-11-13: sin
+     ese permiso, `update-traffic` con `tvup-deploy` falla (pide leer la imagen de Artifact Registry y,
+     probablemente después, `actAs`). No se le dan esos permisos: con ellos volvería a poder publicar
+     sin aprobación. Si hiciera falta automatizarlo, sería con un rol propio que mueva tráfico sin
+     crear revisiones.
+   - La cuenta personal de Owner salió del portátil (`gcloud auth revoke`). Se usa solo en el
+     navegador: aprobar en la consola de Cloud Build y, en **Cloud Shell**, lo que crea recursos o
+     permisos (`promote-app` `create`, `promote`, `deploy` y `secret`, y `setup-build-sa.sh`).
+   - `release.sh` avisa si gcloud no usa la cuenta de despliegue (`DEPLOY_SA`).
+   - Si otra persona de Ingeniería tiene que desplegar, tendrá su propia cuenta nominal. Nunca se
+     comparte `deploy@`.
+
+### Cambia: Producto con el sandbox, sin DevContainer
+
+3. **Producto trabaja con el sandbox de Claude Code impuesto por configuración gestionada**
+   (`/Library/Application Support/ClaudeCode/managed-settings.json`, que el usuario no puede cambiar),
+   con la misma política del paso 2. En sus equipos solo tienen su usuario normal de GitHub, sin
+   gcloud ni AWS, así que el riesgo que queda es menor que en Ingeniería.
+
+   Se probó un DevContainer en dev-arena (PR #8, en borrador). Funcionó, pero se descarta para
+   Producto por dos motivos:
+   - **Fricción:** Docker, VS Code, un token por repo y reconstrucciones, para personas que no
+     trabajan habitualmente en entornos de desarrollo.
+   - **Aislamiento incompleto:** con la carpeta del Mac montada, el contenedor puede dejar ficheros que
+     luego se ejecutan en el Mac (`.git/`, `.claude/settings.local.json`, `.envrc`). Además, VS Code
+     comparte con el contenedor las credenciales de git del Mac.
+
+   Para que fuera una frontera real habría que clonar el repo dentro de un volumen del contenedor y
+   desactivar el reenvío de credenciales. Queda anotado en el PR #8 por si se retoma para Ingeniería.
 
 ### Propuesto
 
-3. **Producto trabaja en un DevContainer sin credenciales de nube.** La plantilla incluye
-   `.devcontainer/` con Node 24, pnpm, Java 21 y los emuladores de Firebase (`pnpm local`), y Claude
-   Code con el sandbox ya activado. Dentro no hay gcloud, AWS ni Firebase reales. El acceso a GitHub
-   es un token *fine-grained* limitado al repo de la app (contenido y PR, sin administración). Producto
-   no necesita más: no despliega, y las reglas de Firestore se prueban en el emulador.
-4. **Cuenta de despliegue con mínimo privilegio, sin rol de aprobador.** Ingeniería deja de lanzar
-   los scripts con su cuenta personal de Owner. Se crea una cuenta de servicio de despliegue con solo
-   lo que necesitan los scripts (Cloud Build, Cloud Run, Firestore reglas e índices, Firebase Auth
-   dominios autorizados, Secret Manager por app). El rol `cloudbuild.builds.approver` queda solo en
-   un grupo de personas, y esa cuenta no lo tiene. Así la aprobación humana pasa de ser una regla a
-   ser un permiso de IAM.
 5. **El despliegue sale de CI, no del portátil.** `release.sh` se ejecuta desde GitHub Actions con
    Workload Identity Federation (sin claves de cuenta de servicio) y un *environment* `produccion`
    con revisor obligatorio. El agente puede preparar y proponer; la ejecución con credenciales queda
-   en un sistema auditado.
-
+   en un sistema auditado. *Pendiente:* el revisor obligatorio de los environments tampoco está
+   disponible en repos privados con el plan actual de GitHub (ver riesgo 5).
 ## Opciones consideradas
 
-### A. Portátil + sandbox de Claude Code (estado actual tras los pasos 1 y 2)
+### A. Portátil + sandbox de Claude Code (elegida para Producto, con configuración gestionada)
 
 | Dimensión | Valoración |
 | --- | --- |
@@ -90,7 +120,7 @@ puesta. Se puede imponer con la configuración gestionada de Claude Code
 (`/Library/Application Support/ClaudeCode/managed-settings.json` en macOS), que el usuario no puede
 cambiar.
 
-### B. DevContainer para Producto (paso 3)
+### B. DevContainer para Producto (descartada el 2026-11-13: ver paso 3)
 
 | Dimensión | Valoración |
 | --- | --- |
@@ -118,8 +148,10 @@ credenciales de Owner.
 
 ## Análisis de los compromisos
 
-- **Comodidad frente a aislamiento.** Cada paso añade fricción: más confirmaciones, un contenedor,
-  un CI. Se acepta porque los permisos actuales permiten a un error borrar o publicar en producción.
+- **Comodidad frente a aislamiento.** Cada paso añade fricción: más confirmaciones, Cloud Shell
+  para crear apps, un CI. Se acepta porque con los permisos anteriores un error podía borrar o
+  publicar en producción. Por la misma razón, para Producto pesa más la fricción del DevContainer
+  que el aislamiento extra que da.
 - **Reglas frente a permisos.** Los pasos 1 y 2 reducen el riesgo, pero dependen de la configuración
   local y de que el agente siga sus instrucciones. Solo los pasos 4 y 5 lo convierten en algo que el
   sistema impone (IAM y revisores obligatorios).
@@ -131,31 +163,40 @@ credenciales de Owner.
 
 - **Más fácil:** explicar y auditar quién aprobó cada despliegue; incorporar a alguien nuevo de
   Producto sin darle acceso a la nube.
-- **Más difícil:** depurar un problema de producción desde la sesión del agente (no verá los logs
-  sin la cuenta adecuada); mantener la imagen del DevContainer y la cuenta de despliegue.
-- **Mientras no estén los pasos 3 a 5:** el sandbox y la aprobación humana son la protección. Los
-  comandos excluidos (`gcloud`, `gh`, `firebase`, `aws`) siguen pidiendo confirmación: hay que leerla
-  antes de aceptarla, no aceptarla siempre.
+- **Más difícil:**
+  - Depurar producción desde la sesión del agente: solo ve lo que permite `tvup-deploy`.
+  - Crear una app nueva: los pasos con permisos se hacen en Cloud Shell, que necesita una vez el repo,
+    `gh` con sesión, `promote-app.env` y Node 24.
+  - Mantener la configuración gestionada en los equipos de Producto.
+- **Mientras no esté el paso 5:** la protección es la combinación del sandbox, la cuenta de
+  despliegue sin aprobador y la aprobación en la consola. Los comandos excluidos del sandbox
+  (`gcloud`, `gh`, `firebase`, `aws`) siguen pidiendo confirmación: hay que leerla antes de aceptarla.
 
 ## Riesgos y preguntas abiertas
 
-1. **Permisos exactos de la cuenta de despliegue.** Hay que medirlos ejecutando `promote-app.sh` y
-   `release.sh` con una cuenta sin roles y añadiendo solo lo que falle. `setup-build-sa.sh` ya crea
-   cuentas de mínimo privilegio para el build y la ejecución; puede ampliarse.
-2. **Route 53.** El DNS está en AWS. ¿Se mantiene como paso manual de Ingeniería (como en dev-arena)
-   o se da a la cuenta de despliegue un rol de AWS limitado a la zona `apps.tvup.cloud`?
-3. **Cuentas personales.** Hay una cuenta personal de GitHub con sesión abierta en el mismo equipo.
-   Conviene separarla del entorno de trabajo.
-4. **Docker en Producto.** Confirmar licencias y que los equipos de Producto pueden ejecutarlo.
+1. ~~Permisos exactos de la cuenta de despliegue.~~ Medidos para `deploy-app` (paso 4). Si falta
+   alguno, se añade solo el permiso que pida el error. Nunca se da Owner ni aprobador.
+2. **Route 53.** El DNS está en AWS y sigue siendo un paso manual de Ingeniería, como en dev-arena.
+   La alternativa es un rol de AWS limitado a la zona `apps.tvup.cloud`.
+3. **Cuentas personales en GitHub.** El agente usa la sesión de `gh` del CTO, que es administrador de
+   la organización. Puede crear PR, comentar y hacer push con esa cuenta. Separarlo necesita una
+   identidad propia para el agente.
+4. **La cuenta `deploy@` es de una persona.** Una segunda persona de Ingeniería tendrá su propia
+   cuenta nominal; si no, la auditoría no distingue quién desplegó.
+5. **El plan de GitHub no protege `main` en repos privados** (la API de protección de ramas responde
+   403). Sin GitHub Team, `CODEOWNERS` no obliga, cualquier cuenta con escritura puede hacer push a
+   `main` y no hay revisores obligatorios en los *environments*. **Se acepta de momento (2026-11-13).**
+   Producción sigue protegida porque cada build espera a que una persona lo apruebe en la consola, y
+   la cuenta del agente no puede aprobar. Hay que revisarlo si aumenta el número de apps o de
+   personas con escritura.
 
 ## Acciones
 
 1. [x] Aprobación humana del build en los scripts y las skills (PR #25).
 2. [x] Sandbox de Claude Code en el equipo de Ingeniería.
-3. [ ] Distribuir la configuración del sandbox como configuración gestionada a todos los equipos que
-       usen Claude Code.
-4. [ ] Añadir `.devcontainer/` a la plantilla y al `esqueleto/`, con guía para Producto.
-5. [ ] Crear la cuenta de despliegue de mínimo privilegio y quitar el rol de aprobador a las cuentas
-       que usa el agente.
-6. [ ] Mover `release.sh` a GitHub Actions con Workload Identity Federation y revisor obligatorio.
-7. [ ] Retirar las credenciales de Owner del portátil desde el que trabaja el agente.
+3. [ ] Distribuir la configuración del sandbox como configuración gestionada a los equipos de Producto.
+4. [x] ~~DevContainer en la plantilla~~: descartado para Producto. Piloto en dev-arena #8, en borrador.
+5. [x] Cuenta de despliegue `tvup-deploy` sin aprobador, usada desde `deploy@tvup.media` (2026-11-13).
+6. [ ] Mover `release.sh` a GitHub Actions con Workload Identity Federation (paso 5).
+7. [x] Credenciales de Owner fuera del portátil desde el que trabaja el agente (2026-11-13).
+8. [ ] Preparar Cloud Shell para `promote-app`: clonar el repo, `gh auth login`, `promote-app.env` y Node 24.

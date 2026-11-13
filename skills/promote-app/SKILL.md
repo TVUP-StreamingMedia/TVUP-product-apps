@@ -14,6 +14,19 @@ las correcciones de la revisión.
 Solo la usa Ingeniería. Si quien te habla es de Producto, explícale que la
 promoción la hace Ingeniería y ofrécele preparar el repo para ella.
 
+## Con qué cuenta se ejecuta cada cosa (ADR-0002)
+
+En el equipo de Ingeniería, gcloud usa la cuenta `deploy@tvup.media`, que se hace pasar por
+`tvup-deploy` (`DEPLOY_SA`). Esa cuenta despliega a diario (`deploy-app`), pero **no aprueba builds
+ni cambia permisos**. Las personas con más permisos no tienen la sesión abierta en el equipo.
+
+- `create`, `promote`, `deploy`, `secret` y `setup-build-sa.sh` crean repos, cuentas, secretos y
+  permisos: con `tvup-deploy` fallarán por permisos. **No los rodees**: prepara el comando exacto,
+  con `--dry-run` delante, y pide al usuario que lo ejecute él en **Cloud Shell** con su cuenta.
+  Lo que no toca la nube (código, PR, revisión) lo sigues haciendo tú.
+- Un error `PERMISSION_DENIED` con `tvup-deploy` es lo esperado en esos pasos, no un fallo que
+  arreglar dando más permisos a la cuenta.
+
 ## Antes de empezar
 
 Comprueba, sin preguntar lo que puedas averiguar tú:

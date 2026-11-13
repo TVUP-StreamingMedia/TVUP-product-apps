@@ -71,6 +71,15 @@ source "$CONFIG_FILE"
 # Cloud Build va en la región de su conexión con GitHub, que puede no ser la de Cloud Run.
 CB_REGION="${CB_REGION:-$REGION}"
 need gcloud ""; need gh ""; need jq ""; need curl ""; need perl ""
+# ADR-0002: el despliegue diario va con la cuenta de despliegue (sin rol de aprobador), haciéndose
+# pasar por ella desde gcloud. Una cuenta personal, sobre todo de Owner, deja que quien lance el
+# script (también la IA) apruebe builds o cambie permisos.
+IMPERSONADA="$(gcloud config get-value auth/impersonate_service_account 2>/dev/null || true)"
+if [[ -z "$IMPERSONADA" ]]; then
+  warn "gcloud no usa la cuenta de despliegue: va con $(gcloud config get-value account 2>/dev/null || echo 'una cuenta personal'). Configúrala como dice el ADR-0002"
+elif [[ -n "${DEPLOY_SA:-}" && "$IMPERSONADA" != "$DEPLOY_SA" ]]; then
+  warn "gcloud se hace pasar por $IMPERSONADA, no por la cuenta de despliegue ($DEPLOY_SA)"
+fi
 CHECK_RULES="$SCRIPT_DIR/../../promote-app/scripts/check-rules.pl"
 [[ -f "$CHECK_RULES" ]] || die "No encuentro check-rules.pl de promote-app"
 APP_OVERRIDES="$SCRIPT_DIR/../../promote-app/scripts/app-overrides.sh"
@@ -288,9 +297,18 @@ cmd_approve() {
     esac
   done
 
-  # Tras un rollback el tráfico queda fijado a una revisión; se devuelve a la última.
-  gcloud run services update-traffic "$SVC" --to-latest --region="$REGION" "${G[@]}" >/dev/null
-  ok "Tráfico en la revisión nueva"
+  # Tras un rollback el tráfico queda fijado a una revisión; se devuelve a la última. Si ya está en
+  # la última (lo normal), no se toca: la cuenta de despliegue no puede mover tráfico (ADR-0002).
+  local consola_run="https://console.cloud.google.com/run/detail/$REGION/$SVC/revisions?project=$GCP_PROJECT"
+  if [[ "$(gcloud run services describe "$SVC" --region="$REGION" "${G[@]}" \
+           --format='value(status.traffic[0].latestRevision,status.traffic[0].percent)')" == $'True\t100' ]]; then
+    ok "Tráfico en la revisión nueva"
+  elif gcloud run services update-traffic "$SVC" --to-latest --region="$REGION" "${G[@]}" >/dev/null 2>&1; then
+    ok "Tráfico en la revisión nueva"
+  else
+    warn "El tráfico sigue fijado a una revisión anterior y esta cuenta no puede moverlo."
+    warn "Pásalo a la última en la consola, con tu cuenta («Manage traffic» → Latest): $consola_run"
+  fi
 
   if [[ -n "$RULES_DIR" ]]; then step "Reglas de Firestore"; deploy_rules; fi
 
@@ -320,7 +338,9 @@ cmd_rollback() {
   [[ -n "$prev" ]] || die "No hay una revisión anterior a $current"
   echo "  De $current → $prev"
   [[ "$YES" == "1" ]] || die "Añade --yes para confirmar la vuelta atrás"
-  gcloud run services update-traffic "$SVC" --to-revisions="$prev=100" --region="$REGION" "${G[@]}" >/dev/null
+  local consola_run="https://console.cloud.google.com/run/detail/$REGION/$SVC/revisions?project=$GCP_PROJECT"
+  gcloud run services update-traffic "$SVC" --to-revisions="$prev=100" --region="$REGION" "${G[@]}" >/dev/null 2>&1 \
+    || die "Esta cuenta no puede mover el tráfico (ADR-0002). Hazlo en la consola, con tu cuenta: «Manage traffic» → 100 % a $prev. $consola_run"
   ok "Tráfico al 100 % en $prev"
   warn "Las reglas de Firestore no se revierten solas. El siguiente 'approve' devuelve el tráfico a la última versión"
 }
