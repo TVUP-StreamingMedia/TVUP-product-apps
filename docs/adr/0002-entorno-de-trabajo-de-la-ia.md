@@ -60,14 +60,18 @@ Separar **lo que hace la IA** de **lo que decide una persona**. Revisión del 20
      (configuración `deploy` con `auth/impersonate_service_account`, y ADC igual para `firebase`).
    - `tvup-deploy` tiene `cloudbuild.builds.viewer`, `cloudbuild.connectionViewer`, `logging.viewer`,
      `run.developer`, `firebaserules.admin`, `datastore.indexAdmin` y
-     `serviceusage.serviceUsageConsumer`. Además tiene `serviceAccountUser` solo sobre las cuentas de
-     ejecución de las apps. **No puede aprobar ni rechazar builds, ni leer o cambiar IAM**
+     `serviceusage.serviceUsageConsumer`. **No puede aprobar ni rechazar builds, ni leer o cambiar IAM**
      (verificado: `getIamPolicy` denegado).
+   - **Sin `serviceAccountUser` sobre las cuentas de ejecución de las apps.** Con ese permiso y
+     `run.developer` podría desplegar en Cloud Run una revisión con cualquier imagen
+     (`gcloud run deploy --image`), sin pasar por Cloud Build ni por la aprobación, y con la cuenta
+     que lee los secretos de la app. Se dio por error el 2026-11-13 y se retira. Hay que comprobar que
+     el rollback (`update-traffic`) funciona sin él; si no, el rollback se hace desde la consola o
+     con un rol propio que no cree revisiones.
    - La cuenta personal de Owner salió del portátil (`gcloud auth revoke`). Se usa solo en el
      navegador: aprobar en la consola de Cloud Build y, en **Cloud Shell**, lo que crea recursos o
      permisos (`promote-app` `create`, `promote`, `deploy` y `secret`, y `setup-build-sa.sh`).
-   - `promote-app secret` da a `tvup-deploy` (`DEPLOY_SA`) `serviceAccountUser` sobre la cuenta propia
-     de cada app, y `release.sh` avisa si gcloud no usa la cuenta de despliegue.
+   - `release.sh` avisa si gcloud no usa la cuenta de despliegue (`DEPLOY_SA`).
    - Si otra persona de Ingeniería tiene que desplegar, tendrá su propia cuenta nominal. Nunca se
      comparte `deploy@`.
 
