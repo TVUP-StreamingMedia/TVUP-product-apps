@@ -152,11 +152,11 @@ compare_json() { gh api "repos/$REPO/compare/$1...$2"; }
 truncated() { jq -e '(.files | length) >= 300 or (.commits | length) < .total_commits' <<<"$1" >/dev/null; }
 has_rules() { gh api "repos/$REPO/contents/firestore.rules?ref=$1" --jq .type >/dev/null 2>&1; }
 pr_numbers() { gh api "repos/$REPO/commits/$1/pulls" --jq '.[].number' 2>/dev/null || true; }
+# El dominio público sale de APPS_DOMAIN (promote-app.env), con la misma regla que usa
+# promote-app.sh al crearlo (<servicio>.<APPS_DOMAIN>). No se pregunta a la API de domain
+# mappings: la cuenta de despliegue (ADR-0002) no puede leerlos y caía en la URL de run.app.
 public_url() {
-  local d
-  d="$(gcloud beta run domain-mappings list --region="$REGION" "${G[@]}" \
-       --filter="spec.routeName=$SVC" --format='value(metadata.name)' 2>/dev/null | head -1 || true)"
-  if [[ -n "$d" ]]; then echo "https://$d"
+  if [[ -n "${APPS_DOMAIN:-}" ]]; then echo "https://$SVC.$APPS_DOMAIN"
   else gcloud run services describe "$SVC" --region="$REGION" "${G[@]}" --format='value(status.url)'; fi
 }
 
